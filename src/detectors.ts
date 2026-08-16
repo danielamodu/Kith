@@ -28,24 +28,41 @@ export type Observation = {
 };
 
 /**
- * Below this many messages we cannot compute a trustworthy personal baseline.
- * Discovered empirically: a member posting monthly yields 2 observations over
- * 90 days, and a "41-day rhythm" from one gap is noise, not a baseline.
- * Saying nothing is always better than saying something confidently wrong.
- * CALIBRATE
+ * Every threshold in one place, and every one of them a knob rather than a
+ * constant — because they must be *fitted* to a real community, not chosen on
+ * principle. `npm run calibrate` sweeps these and shows the tradeoff.
+ *
+ * The defaults below are first guesses validated only against the synthetic
+ * fixture. Treat them as unfitted until they have been run against real history.
  */
-const MIN_OBSERVATIONS = 8;
+export type Thresholds = {
+  /**
+   * Below this many messages we cannot compute a trustworthy personal baseline.
+   * Discovered empirically: a member posting monthly yields 2 observations over
+   * 90 days, and a "41-day rhythm" from one gap is noise, not a baseline.
+   * Saying nothing is always better than saying something confidently wrong.
+   */
+  minObservations: number;
+  /** How many times their own median gap counts as "well outside their rhythm". */
+  gapRatio: number;
+  /** Additional robust-outlier guard, in MADs above the median. */
+  gapMads: number;
+  /** Recent messages this fraction of their norm or shorter counts as tapering. */
+  toneShrink: number;
+  /** A newcomer's first post is "ignored" past this multiple of the community norm. */
+  newcomerPatience: number;
+  /** A contributor must score at least this fraction of the top score to surface. */
+  contributionFloor: number;
+};
 
-/** How many times their own median gap counts as "well outside their rhythm". CALIBRATE */
-const GAP_RATIO = 3;
-/** Additional robust-outlier guard, in MADs above the median. CALIBRATE */
-const GAP_MADS = 3;
-
-/** Recent messages this much shorter than their norm counts as tapering. CALIBRATE */
-const TONE_SHRINK = 0.6;
-
-/** A newcomer's first post is "ignored" past this multiple of the community's norm. CALIBRATE */
-const NEWCOMER_PATIENCE = 3;
+export const DEFAULT_THRESHOLDS: Thresholds = {
+  minObservations: 8,
+  gapRatio: 3,
+  gapMads: 3,
+  toneShrink: 0.6,
+  newcomerPatience: 3,
+  contributionFloor: 0.4,
+};
 
 const fmtDays = (h: number) => `${(h / 24).toFixed(1)} days`;
 
@@ -59,7 +76,10 @@ const fmtDays = (h: number) => `${(h / 24).toFixed(1)} days`;
  * *newcomers*, and toward breadth of people helped rather than reply count —
  * volume is not contribution, and rewarding volume rewards the loudest person.
  */
-export function d1Contribution(states: Map<string, MemberState>): Observation[] {
+export function d1Contribution(
+  states: Map<string, MemberState>,
+  t: Thresholds = DEFAULT_THRESHOLDS,
+): Observation[] {
   const scored = [...states.values()].map((s) => ({
     s,
     score: s.answersGiven + s.answersToNewcomers * 2 + s.distinctRepliedTo * 0.5,
@@ -74,7 +94,7 @@ export function d1Contribution(states: Map<string, MemberState>): Observation[] 
     if (score <= 0) continue;
     const rank = scores.indexOf(score) + 1;
     // only surface genuine standouts
-    if (score < top * 0.4) continue;
+    if (score < top * t.contributionFloor) continue;
 
     out.push({
       memberId: s.id,
@@ -101,27 +121,30 @@ export function d1Contribution(states: Map<string, MemberState>): Observation[] 
 // D2 · Gap drift — someone is going quiet, relative to their own rhythm
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function d2GapDrift(states: Map<string, MemberState>): Observation[] {
+export function d2GapDrift(
+  states: Map<string, MemberState>,
+  t: Thresholds = DEFAULT_THRESHOLDS,
+): Observation[] {
   const out: Observation[] = [];
 
   for (const s of states.values()) {
     // A gap is a question, never a conclusion — and these three guards are
     // where most false positives die.
-    if (s.messageCount < MIN_OBSERVATIONS) continue; // unreliable baseline
+    if (s.messageCount < t.minObservations) continue; // unreliable baseline
     if (s.saidFarewell) continue; // they left on purpose, that isn't drift
     if (s.medianGapHours <= 0) continue;
 
     const ratio = s.currentGapHours / s.medianGapHours;
-    const madGuard = s.medianGapHours + GAP_MADS * s.gapMadHours;
+    const madGuard = s.medianGapHours + t.gapMads * s.gapMadHours;
 
-    if (ratio < GAP_RATIO) continue;
+    if (ratio < t.gapRatio) continue;
     if (s.currentGapHours < madGuard) continue;
 
     out.push({
       memberId: s.id,
       memberName: s.name,
       kind: "gap-drift",
-      confidence: Math.min(1, ratio / (GAP_RATIO * 4)),
+      confidence: Math.min(1, ratio / (t.gapRatio * 4)),
       claim:
         `${s.name} hasn't posted in ${fmtDays(s.currentGapHours)} — ` +
         `about ${ratio.toFixed(0)}× their usual gap.`,
@@ -147,20 +170,23 @@ export function d2GapDrift(states: Map<string, MemberState>): Observation[] {
  * creepy claim about a person. It NEVER fires alone — `compose()` will not emit
  * a tone-shift observation unless another detector already fired on that member.
  */
-export function d3ToneShift(states: Map<string, MemberState>): Observation[] {
+export function d3ToneShift(
+  states: Map<string, MemberState>,
+  t: Thresholds = DEFAULT_THRESHOLDS,
+): Observation[] {
   const out: Observation[] = [];
   for (const s of states.values()) {
-    if (s.messageCount < MIN_OBSERVATIONS) continue;
+    if (s.messageCount < t.minObservations) continue;
     if (s.medianLength <= 0) continue;
 
     const shrink = s.recentMedianLength / s.medianLength;
-    if (shrink > TONE_SHRINK) continue;
+    if (shrink > t.toneShrink) continue;
 
     out.push({
       memberId: s.id,
       memberName: s.name,
       kind: "tone-shift",
-      confidence: Math.min(1, (TONE_SHRINK - shrink) / TONE_SHRINK),
+      confidence: Math.min(1, (t.toneShrink - shrink) / t.toneShrink),
       claim:
         `${s.name}'s last few messages were much shorter than usual — ` +
         `about ${Math.round(s.recentMedianLength)} characters against their norm of ${Math.round(s.medianLength)}.`,
@@ -206,6 +232,7 @@ export function d4UnansweredNewcomers(
   community: Community,
   states: Map<string, MemberState>,
   asOf: Date,
+  t: Thresholds = DEFAULT_THRESHOLDS,
 ): Observation[] {
   const byId = new Map<number, Message>();
   for (const m of community.messages) byId.set(m.id, m);
@@ -221,7 +248,7 @@ export function d4UnansweredNewcomers(
   }
 
   const out: Observation[] = [];
-  const patience = normHours * NEWCOMER_PATIENCE;
+  const patience = normHours * t.newcomerPatience;
 
   for (const s of states.values()) {
     // "newcomer" = arrived recently relative to the community's own span
@@ -353,12 +380,13 @@ export function runAll(
   community: Community,
   states: Map<string, MemberState>,
   asOf: Date = community.to,
+  t: Thresholds = DEFAULT_THRESHOLDS,
 ): { observations: Observation[]; composites: Composite[] } {
   const observations = [
-    ...d1Contribution(states),
-    ...d2GapDrift(states),
-    ...d3ToneShift(states),
-    ...d4UnansweredNewcomers(community, states, asOf),
+    ...d1Contribution(states, t),
+    ...d2GapDrift(states, t),
+    ...d3ToneShift(states, t),
+    ...d4UnansweredNewcomers(community, states, asOf, t),
   ];
   return { observations, composites: compose(observations) };
 }

@@ -146,12 +146,38 @@ correctly empty.
 
 ## Calibration
 
-**Every constant in this document is deliberately unspecified.** Thresholds, window sizes,
-and outlier bounds must be fitted against the real backfilled community, not chosen in
-advance. Picking numbers before seeing data is how this produces confident nonsense on
-camera.
+**Every constant is a knob, not a value.** Thresholds live in `DEFAULT_THRESHOLDS`
+(`src/detectors.ts`) and must be fitted against the real backfilled community. Picking
+numbers before seeing data is how this produces confident nonsense on camera.
 
-Calibration is a day 5–6 task and requires the backfill (task #3) to have landed.
+`npm run calibrate` sweeps each threshold and reports what changes: how many people
+surface, who composes, and — the part that outranks every other number — whether the
+**discriminating case** still holds. That case is found automatically rather than
+hardcoded, so it works on any community: the member furthest outside their *own* rhythm,
+paired against the member with the longest *absolute* silence who is nonetheless still
+inside theirs.
+
+### Finding, 16 Aug: the synthetic fixture cannot calibrate anything
+
+Run against the fixture, almost every sweep is **flat**. `gapRatio` from 1.5 to 15 gives an
+identical answer; `minObservations` from 2 to 40 changes nothing. Only the extremes move it
+— at `gapRatio 30` the signal is missed entirely.
+
+That is not a bug in the tool, it is a property of data we designed ourselves. The personas
+are cleanly separated by construction, so no threshold in a wide band can distinguish them.
+**Tuning against a fixture you authored is circular.** The tool is ready; the fixture has
+nothing to teach it.
+
+Two things this predicts about real data, both worth checking:
+
+- If the real sweeps are also flat, this community may lack the contrast the demo depends
+  on — find that out *before* filming, not during.
+- If they are steep, the thresholds matter a great deal, and the choice needs the creator's
+  own judgement as ground truth. Ask them: *"is this the right person to worry about?"*
+
+Prefer the setting that keeps the discriminating case OK across the **widest band**.
+Robustness beats a knife-edge optimum, because next month's data will differ from this
+month's.
 
 ---
 

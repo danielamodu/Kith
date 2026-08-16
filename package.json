@@ -12,6 +12,7 @@
     "ingest": "node src/cli-ingest.ts",
     "detect": "node src/cli-detect.ts",
     "registry": "node src/cli-registry.ts",
+    "calibrate": "node src/calibrate.ts",
     "pretest": "node src/fixture.ts",
     "test": "node --test \"src/*.test.ts\""
   }
