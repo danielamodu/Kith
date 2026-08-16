@@ -7,13 +7,26 @@ import { fileURLToPath } from "node:url";
 import { loadExport } from "./ingest.ts";
 import { buildMemberStates } from "./members.ts";
 import { runAll } from "./detectors.ts";
+import { MessageStore } from "./store.ts";
 
-// fileURLToPath, not URL.pathname — the latter yields "/C:/..." on Windows.
+const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
+
+// --store reads the accumulated store (backfill + live merged); otherwise a
+// single export file, which is the fast path while iterating on a fixture.
+const useStore = process.argv.includes("--store");
 const path =
-  process.argv[2] ??
-  fileURLToPath(new URL("../data/dev-export.json", import.meta.url));
+  process.argv.find((a) => !a.startsWith("--") && a.endsWith(".json")) ??
+  root("data/dev-export.json");
 
-const community = await loadExport(path);
+const community = useStore
+  ? await new MessageStore(
+      root("data/store.jsonl"),
+      root("data/store-state.json"),
+    ).toCommunity(
+      (await new MessageStore(root("data/store.jsonl"), root("data/store-state.json")).readState())
+        .chatTitle ?? "community",
+    )
+  : await loadExport(path);
 const states = buildMemberStates(community);
 const { observations, composites } = runAll(community, states);
 

@@ -13,6 +13,8 @@
     "detect": "node src/cli-detect.ts",
     "registry": "node src/cli-registry.ts",
     "calibrate": "node src/calibrate.ts",
+    "backfill": "node src/cli-backfill.ts",
+    "poll": "node src/cli-poll.ts",
     "pretest": "node src/fixture.ts",
     "test": "node --test \"src/*.test.ts\""
   }
