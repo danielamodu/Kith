@@ -1,0 +1,18 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Community data — contains real people's messages
+data/
+*.export.json
+
+# Node
+node_modules/
+dist/
+*.log
+npm-debug.log*
+
+# OS
+Thumbs.db
+.DS_Store
