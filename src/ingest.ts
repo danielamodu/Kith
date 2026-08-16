@@ -90,13 +90,16 @@ export function normalise(raw: RawExport): Community {
     // Empty messages are stickers, media, or reactions. They are participation
     // but carry no length signal, so keep them and let D3 filter on length > 0.
     messages.push({
-      id: m.id,
+      id: String(m.id),
       ts,
       authorId: who.id,
       authorName: who.name,
       text,
       length: text.length,
-      replyToId: m.reply_to_message_id,
+      replyToId:
+        m.reply_to_message_id === undefined
+          ? undefined
+          : String(m.reply_to_message_id),
     });
   }
 

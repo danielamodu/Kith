@@ -38,7 +38,7 @@ export function buildMemberStates(
   community: Community,
   asOf: Date = community.to,
 ): Map<string, MemberState> {
-  const byId = new Map<number, Message>();
+  const byId = new Map<string, Message>();
   for (const m of community.messages) byId.set(m.id, m);
 
   const grouped = new Map<string, Message[]>();

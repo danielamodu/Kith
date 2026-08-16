@@ -214,7 +214,7 @@ export function d3ToneShift(
  * judged against this rather than a fixed number of hours.
  */
 export function communityReplyNorm(community: Community): number {
-  const byId = new Map<number, Message>();
+  const byId = new Map<string, Message>();
   for (const m of community.messages) byId.set(m.id, m);
 
   const latencies: number[] = [];
@@ -234,13 +234,13 @@ export function d4UnansweredNewcomers(
   asOf: Date,
   t: Thresholds = DEFAULT_THRESHOLDS,
 ): Observation[] {
-  const byId = new Map<number, Message>();
+  const byId = new Map<string, Message>();
   for (const m of community.messages) byId.set(m.id, m);
 
   const normHours = communityReplyNorm(community);
 
   // who replied to what
-  const gotReply = new Set<number>();
+  const gotReply = new Set<string>();
   for (const m of community.messages) {
     if (m.replyToId === undefined) continue;
     const target = byId.get(m.replyToId);

@@ -46,14 +46,22 @@ export type RawExport = {
 // ---------- normalised ----------
 
 export type Message = {
-  id: number;
+  /**
+   * String, not number. Discord IDs are snowflakes — 64-bit values well beyond
+   * Number.MAX_SAFE_INTEGER — so storing them numerically silently corrupts the
+   * low bits, which is exactly where the per-millisecond increment lives. Reply
+   * links would break, and reply links are what D1 and D4 are built on.
+   * Telegram's numeric ids are widened to string on ingest so both platforms
+   * share one identity space.
+   */
+  id: string;
   ts: Date;
   authorId: string;
   authorName: string;
   text: string;
   /** character length of text, precomputed — used by D3 */
   length: number;
-  replyToId?: number;
+  replyToId?: string;
 };
 
 /** Joins/leaves, kept separate: they mark tenure but are not participation. */

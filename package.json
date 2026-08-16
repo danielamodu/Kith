@@ -15,6 +15,7 @@
     "calibrate": "node src/calibrate.ts",
     "backfill": "node src/cli-backfill.ts",
     "poll": "node src/cli-poll.ts",
+    "discord": "node src/cli-discord.ts",
     "pretest": "node src/fixture.ts",
     "test": "node --test \"src/*.test.ts\""
   }

@@ -115,7 +115,7 @@ do {
     const chat = updates.find((u) => u.message)?.message?.chat;
     await store.writeState({
       offset,
-      chatId: chat?.id,
+      chatId: chat?.id === undefined ? undefined : String(chat.id),
       chatTitle: chat?.title,
       messageCount: total,
       lastPolledAt: new Date().toISOString(),

@@ -30,7 +30,7 @@ const store = new MessageStore(root("data/store.jsonl"), root("data/store-state.
 await store.init();
 
 const before = await store.readState();
-const rows = communityToStoreRows(community, before.chatId ?? 0);
+const rows = communityToStoreRows(community, before.chatId ?? "0", "export");
 const { added } = await store.append(rows.messages, rows.events);
 
 const total = (await store.readAll()).messages.length;

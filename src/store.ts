@@ -18,7 +18,7 @@ import type { Community, MembershipEvent, Message } from "./types.ts";
 export type StoreState = {
   /** highest Telegram update_id acknowledged — see the offset warning in telegram.ts */
   offset: number;
-  chatId?: number;
+  chatId?: string;
   chatTitle?: string;
   messageCount: number;
   lastPolledAt?: string;
@@ -87,11 +87,11 @@ export class MessageStore {
   async readAll(): Promise<{
     messages: StoredMessage[];
     events: StoredEvent[];
-    messageIds: Set<number>;
+    messageIds: Set<string>;
   }> {
     const messages: StoredMessage[] = [];
     const events: StoredEvent[] = [];
-    const messageIds = new Set<number>();
+    const messageIds = new Set<string>();
 
     if (!existsSync(this.logPath)) return { messages, events, messageIds };
 
@@ -162,7 +162,11 @@ export class MessageStore {
 }
 
 /** Fold a parsed export into store rows so backfill and live share one path. */
-export function communityToStoreRows(c: Community, chatId = 0): {
+export function communityToStoreRows(
+  c: Community,
+  chatId = "0",
+  source: StoredMessage["source"] = "export",
+): {
   messages: StoredMessage[];
   events: StoredEvent[];
 } {
@@ -175,6 +179,7 @@ export function communityToStoreRows(c: Community, chatId = 0): {
       text: m.text,
       replyToId: m.replyToId,
       chatId,
+      source,
     })),
     events: c.events
       .filter((e) => e.kind === "join" || e.kind === "leave")
@@ -185,6 +190,7 @@ export function communityToStoreRows(c: Community, chatId = 0): {
         action: e.action,
         kind: e.kind as "join" | "leave",
         chatId,
+        source,
       })),
   };
 }

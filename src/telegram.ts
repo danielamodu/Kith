@@ -122,15 +122,22 @@ export function displayName(u: TgUser): string {
   return full || u.username || `user${u.id}`;
 }
 
-/** A message as we persist it — deliberately the same shape the export produces. */
+/**
+ * A message as we persist it — one shape for every platform.
+ *
+ * `id` and `chatId` are strings so Discord snowflakes survive intact; Telegram's
+ * numeric ids are widened on the way in. `source` records where a row came from,
+ * so a store holding both a Telegram backfill and Discord history stays legible.
+ */
 export type StoredMessage = {
-  id: number;
+  id: string;
   ts: string;
   authorId: string;
   authorName: string;
   text: string;
-  replyToId?: number;
-  chatId: number;
+  replyToId?: string;
+  chatId: string;
+  source: "telegram" | "discord" | "export";
 };
 
 export type StoredEvent = {
@@ -139,7 +146,8 @@ export type StoredEvent = {
   actorName: string;
   action: string;
   kind: "join" | "leave";
-  chatId: number;
+  chatId: string;
+  source: "telegram" | "discord" | "export";
 };
 
 export function normaliseUpdate(u: TgUpdate): {
@@ -154,6 +162,8 @@ export function normaliseUpdate(u: TgUpdate): {
   const ts = new Date(m.date * 1000).toISOString();
 
   // membership changes carry no text but establish tenure
+  const chatId = String(m.chat.id);
+
   if (m.new_chat_members?.length) {
     for (const member of m.new_chat_members) {
       if (member.is_bot) continue;
@@ -163,7 +173,8 @@ export function normaliseUpdate(u: TgUpdate): {
         actorName: displayName(member),
         action: "join_group",
         kind: "join",
-        chatId: m.chat.id,
+        chatId,
+        source: "telegram",
       });
     }
   }
@@ -174,20 +185,25 @@ export function normaliseUpdate(u: TgUpdate): {
       actorName: displayName(m.left_chat_member),
       action: "left_group",
       kind: "leave",
-      chatId: m.chat.id,
+      chatId,
+      source: "telegram",
     });
   }
 
   // Bots are not community members; their messages would pollute every baseline.
   if (m.from && !m.from.is_bot && typeof m.text === "string") {
     messages.push({
-      id: m.message_id,
+      id: String(m.message_id),
       ts,
       authorId: authorId(m.from),
       authorName: displayName(m.from),
       text: m.text,
-      replyToId: m.reply_to_message?.message_id,
-      chatId: m.chat.id,
+      replyToId:
+        m.reply_to_message === undefined
+          ? undefined
+          : String(m.reply_to_message.message_id),
+      chatId,
+      source: "telegram",
     });
   }
 
