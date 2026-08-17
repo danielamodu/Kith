@@ -104,7 +104,9 @@ know anyone's pronouns and must never guess.
 
 Stated rather than left silent, because scope decisions are design decisions:
 
-- Multi-platform (Discord, Slack) — one community, done properly
+- Multi-tenant / multiple communities at once — Telegram and Discord ingestion both exist
+  (`src/telegram.ts`, `src/discord.ts`) since a real community could show up on either, but
+  Kith is scoped to one community's history at a time, done properly
 - Image and video moderation
 - Dashboards and web UI — the output is a sentence, not a chart
 - Multi-tenant onboarding
@@ -131,18 +133,43 @@ creators already ignore. An empty digest is usually the correct digest.
 
 ## Data and consent
 
-Community history used in development and in the demo is backfilled with the explicit consent
-of the community owner, and any member featured by name consented to appear. Provenance is
-documented rather than assumed.
+**Current status, 16 Aug: the demo runs on the synthetic fixture (`src/fixture.ts`), not a
+real backfill.** Real community access is blocked pending owner consent — see
+`docs/platform-findings.md`. Rather than stall, we're proceeding on synthetic data now, with
+two conditions that are non-negotiable: the fixture is clearly labelled illustrative
+wherever it's shown (the demo video carries an on-screen disclosure caption, not a footnote),
+and it never appears alongside a claim of realness. Disclosed synthetic data is an honest
+weaker submission; undisclosed synthetic data is a dishonest one that risks the whole thing
+being discounted if a judge notices — the two are not the same decision.
+
+**If real community history lands before filming, this reverts:** the fixture is replaced,
+this section is rewritten to describe the real source and the consent obtained (from the
+owner, and separately from anyone featured by name), and the demo's disclosure caption comes
+out. That is the stronger, intended version of this submission and remains the goal.
 
 ---
 
 ## Repository
 
 ```
-docs/perception-spec.md   what Kith notices and why each signal needs memory
-demo-script.md            the 1:50 submission video, written before the build
-day-1-checklist.md        platform validation gates
+src/
+  types.ts, ingest.ts, members.ts, detectors.ts   perception layer — pure functions, tested
+  registry.ts                                     durable member store + the small watchlist
+                                                    the cadence cycle actually reads
+  telegram.ts, discord.ts, store.ts               platform ingestion, merged into one store
+  cli-*.ts                                        fixture, ingest, detect, registry, backfill,
+                                                    poll, discord, calibrate
+  *.test.ts                                        regression tests protecting the thesis,
+                                                    not the code
+docs/
+  perception-spec.md      what Kith notices, why each signal needs memory, and calibration
+  architecture.md          the Minds integration, settled from hands-on testing
+  platform-findings.md     what was verified against the live Minds API, and when it corrected
+                            an earlier assumption
+  telegram-setup.md, discord-setup.md
+  evidence/                dated records of things proven against the live Mind
+demo-script.md             the 1:50 submission video, written before the build
+day-1-checklist.md         platform validation gates
 ```
 
-Implementation lands once platform validation clears.
+`npm test` runs the full suite against the fixture. See `docs/architecture.md` for status.

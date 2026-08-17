@@ -1,9 +1,12 @@
 /**
  * Generates a synthetic Telegram export with the shape of a real creator community.
  *
- * This is NOT for the demo — the demo needs real history with real people. It exists
- * so the detectors can be built and verified before real data arrives, and so we have
- * a regression fixture afterwards.
+ * Originally built purely for development and regression testing while real community
+ * access was pending. As of 16 Aug, real access is still blocked on owner consent, so
+ * this is ALSO the current demo basis — disclosed on screen as illustrative rather than
+ * presented as real (see demo-script.md's STATUS note and README's Data and consent
+ * section). If real history lands before filming, it replaces this and the disclosure
+ * comes out; that is the stronger, intended version and the goal, not this one.
  *
  * The important property: it contains the *discriminating case*. Two members go quiet
  * for exactly the same number of days, and only one of them is a signal. If a detector
