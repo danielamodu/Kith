@@ -1,0 +1,7 @@
+{
+  "question": "Is anyone in the community struggling right now?",
+  "answer": "I don't have information about specific members. You could check engagement metrics or ask the community directly.",
+  "source": "hand-authored",
+  "note": "Genuinely separate, memory-less system — not re-queried live for this comparison. No `--no-memory` mode exists on Kith itself, and a second, always-on Mind kept purely for this contrast would repeat the cognition-cost leak already found and fixed once (see docs/evidence/2026-08-16-cognition-leak.md). This line matches what a stateless assistant given the same question actually says.",
+  "capturedAt": null
+}

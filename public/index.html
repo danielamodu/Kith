@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kith</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <img class="mark" src="/favicon.svg" alt="" />
+    <span class="brand">Kith</span>
+    <nav class="views">
+      <button data-view="compare" class="active">Compare</button>
+      <button data-view="feed">Live Feed</button>
+    </nav>
+    <div class="budget-strip" id="budget-strip">·</div>
+  </header>
+
+  <main>
+    <!-- Beat A -->
+    <section class="view active" id="view-compare">
+      <div class="disclosure" id="disclosure-caption">
+        Illustrative synthetic community — used to demonstrate the mechanism honestly
+        while we secure a live one.
+      </div>
+
+      <h2 id="compare-question">Is anyone in the community struggling right now?</h2>
+
+      <div class="compare-grid">
+        <div class="panel">
+          <div class="panel-label">Same model. Memory disabled.</div>
+          <div class="panel-answer" id="baseline-answer">…</div>
+          <div class="panel-meta" id="baseline-meta"></div>
+        </div>
+
+        <div class="panel kith">
+          <div class="panel-label">Kith — reading the community it remembers.</div>
+          <div class="pronoun-warning" id="pronoun-warning">
+            STALE — RE-VERIFY BEFORE FILMING (gendered pronoun detected)
+          </div>
+          <div class="panel-answer" id="live-answer">
+            No live answer captured yet.
+          </div>
+          <div class="panel-meta" id="live-meta"></div>
+
+          <details class="receipts" id="receipts" hidden>
+            <summary>Receipts — the history this answer draws on</summary>
+            <div class="receipt-list" id="receipt-list"></div>
+          </details>
+
+          <div class="refresh-row">
+            <button class="refresh" id="refresh-btn">↻ Ask Kith live</button>
+            <span class="refresh-note">Spends real cognition — confirms before sending.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="watch-summary">
+        <h3>Who Kith is currently holding in mind</h3>
+        <div class="watch-list" id="watch-list">
+          <div class="empty-state">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Beat B -->
+    <section class="view" id="view-feed">
+      <h2>Live Feed</h2>
+      <p class="refresh-note">
+        Proves autonomy: an unprompted message with no human turn between it and the
+        last one. Nothing here auto-refreshes — every check is a manual click.
+      </p>
+
+      <div class="feed-controls">
+        <span class="feed-alias" id="feed-alias">…</span>
+        <button id="mark-restart-btn">Mark restart now</button>
+        <button class="primary" id="check-feed-btn">Check for new messages</button>
+      </div>
+
+      <div class="feed-list" id="feed-list">
+        <div class="empty-state">No messages checked yet.</div>
+      </div>
+      <div class="last-checked" id="last-checked"></div>
+    </section>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

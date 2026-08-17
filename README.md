@@ -48,8 +48,12 @@ That claim is testable, and we test it: see the baseline comparison below.
 
 ## The baseline comparison
 
-Kith ships with a `--no-memory` mode: the same model, the same prompt, memory removed,
-nothing else changed. Asked *"is anyone in the community struggling right now?"*:
+The web UI's Compare view (`npm run web`) puts this side by side live: the same question,
+asked of a hand-authored memory-disabled baseline and of Kith reading the community it
+remembers. There is no `--no-memory` flag on Kith itself — a second, always-on Mind kept
+purely for a live baseline would repeat the cognition-cost leak documented below on a second
+surface, so the left panel is disclosed as a genuinely separate, memory-less capture rather
+than re-queried live every take.
 
 | | Response |
 |---|---|
@@ -75,16 +79,18 @@ Platform validated hands-on; perception layer built and tested.
 | Registry + briefing payloads | **Done** — 4,135 messages distil to ~700 tokens |
 | Real community backfill | **Blocked** — needs the consented export |
 | Threshold calibration | Blocked on real data; all constants marked `CALIBRATE` |
-| Writing registry into a Mind Artifact | Next |
-| Autonomous digest via cadence cycles | Next |
-| Baseline harness | Next |
+| Writing registry into a Mind Artifact | **Done** — proven end to end against the live Mind |
+| Autonomous digest via cadence cycles | **Done** — fired unprompted, with timestamps, then found and fixed a real cost leak |
+| Web UX (`src/server.ts`, `public/`) | **Done** — Compare (Beat A) and Live Feed (Beat B) views, minimal Express + vanilla JS |
+| Baseline harness | Hand-authored, live-swappable — see "The baseline comparison" above |
 | Optional payout layer | Off by default; wallet exists (`0xfA4F…` on Base) |
 
 ```bash
 npm run fixture   # generate synthetic community
 npm run detect    # what Kith would tell the creator
 npm run registry  # build the payloads for the Mind
-npm test          # 10 regression tests
+npm run web       # the web UI, at http://localhost:3131
+npm test          # 16 regression tests
 ```
 
 ### What the tests lock
@@ -108,7 +114,6 @@ Stated rather than left silent, because scope decisions are design decisions:
   (`src/telegram.ts`, `src/discord.ts`) since a real community could show up on either, but
   Kith is scoped to one community's history at a time, done properly
 - Image and video moderation
-- Dashboards and web UI — the output is a sentence, not a chart
 - Multi-tenant onboarding
 - Resurfacing-conflict detection — real and valuable, too large for the window
 - Sentiment analysis as a primary signal — unreliable on in-group speech, sarcasm and
@@ -139,6 +144,16 @@ low — something we never designed and had to explicitly suppress via committed
 See `docs/evidence/2026-08-16-cognition-leak.md`. This is now load-bearing for the viability
 story: any real deployment needs a funded, monitored cadence, not a "set and forget" Mind.
 
+**The pronoun fix holds for the primary subject of an answer, not reliably for people
+mentioned in passing.** The structural fix (carrying `pronouns` as registry data, not just a
+tenet) was proven against the member a question is actually about. The web UI's first real
+live capture still used "her" for a different member referenced briefly, deeper in the same
+answer. Caught by a deliberate second safeguard — the Compare view scans every cached answer
+for a gendered pronoun and shows a visible warning rather than silently displaying it — see
+`docs/evidence/2026-08-17-pronoun-guard-caught-a-real-case.md`. Working as designed: assume a
+regression eventually slips through, and catch it in software rather than by remembering to
+check by hand before a take.
+
 ## Data and consent
 
 **Current status, 16 Aug: the demo runs on the synthetic fixture (`src/fixture.ts`), not a
@@ -165,10 +180,19 @@ src/
   registry.ts                                     durable member store + the small watchlist
                                                     the cadence cycle actually reads
   telegram.ts, discord.ts, store.ts               platform ingestion, merged into one store
+  minds-client.ts                                  fetch()-based Minds Builder API client;
+                                                    the one place that shells out to the CLI
+                                                    (send only — every read is direct HTTP)
+  demo-session.ts, server.ts                       the web UI's backend
   cli-*.ts                                        fixture, ingest, detect, registry, backfill,
                                                     poll, discord, calibrate
   *.test.ts                                        regression tests protecting the thesis,
                                                     not the code
+public/                    the web UI — Compare (Beat A) and Live Feed (Beat B), vanilla JS,
+                            no framework; `npm run web`
+content/
+  baseline-answer.json     the hand-authored Beat A "memory disabled" panel — tracked in git,
+                            unlike data/ which holds derived community data
 docs/
   perception-spec.md      what Kith notices, why each signal needs memory, and calibration
   architecture.md          the Minds integration, settled from hands-on testing
