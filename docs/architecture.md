@@ -206,8 +206,16 @@ smaller than the registry. If that stops holding, the cost model is broken.
    too expensive to read every cadence cycle. **Tiering (index + detail) becomes necessary
    somewhere in the low hundreds of members** — build the index/detail split before the
    real community lands, not after.
-3. **Cadence cycle cost** unmeasured. Measure before leaving autonomy running; an idle
-   autonomous Mind burns credits.
+3. **Cadence cycle cost — measured, and worse than expected.** "Deactivating" autonomy
+   stopped PAM specifically but not cadence cycles themselves, nor other equipped skills
+   acting during them — including a system-default `Steward Conversion` skill that sent an
+   unprompted payment solicitation once runway ran low. ~35.5 cognition spent on cycles and
+   that message alone, over ~2 hours believed to be silent. Fixed via three committed
+   covenants (ignore the low-runway beacon, no cadence-driven outbound without invitation,
+   cadence pushed to the 7-day platform maximum). Full account:
+   `docs/evidence/2026-08-16-cognition-leak.md`. **Both covenants must be explicitly lifted
+   before filming Beat B**, which depends on genuine unprompted output — added to the
+   pre-filming checklist.
 4. **Test-data contamination.** This Mind now holds fabricated members (Maya Okonkwo, Dev
    Raman, Priya Anand). They must be purged before the demo, or the demo runs on a second
    Mind — otherwise Kith may cite a fictional member on camera. **Decide by day 3.**

@@ -131,6 +131,14 @@ drift. Kith proposes; it never concludes on someone's behalf.
 creator's attention. A stream of single-signal alerts is a notification firehose — the thing
 creators already ignore. An empty digest is usually the correct digest.
 
+**An always-on Mind has a real, unavoidable running cost — proven, not assumed.** Cadence
+cycles meter cognition whether or not anything gets sent, and cannot be fully disabled, only
+spaced out (platform maximum: 7 days). Worse, a system-default skill (`Steward Conversion`)
+composed and sent an unprompted payment solicitation to the steward the first time runway ran
+low — something we never designed and had to explicitly suppress via committed covenants.
+See `docs/evidence/2026-08-16-cognition-leak.md`. This is now load-bearing for the viability
+story: any real deployment needs a funded, monitored cadence, not a "set and forget" Mind.
+
 ## Data and consent
 
 **Current status, 16 Aug: the demo runs on the synthetic fixture (`src/fixture.ts`), not a

@@ -122,6 +122,14 @@ not the identity of the person in it.
 
 ## 1:12–1:38 · Beat B — session boundary
 
+**Pre-filming checklist for this beat specifically** (16 Aug finding — see
+`docs/evidence/2026-08-16-cognition-leak.md`): Kith currently has two committed covenants
+suppressing *all* unprompted outbound messages, applied after a system-default skill sent
+an unwanted payment solicitation. Both must be explicitly lifted before this beat can work
+— re-enable PAM, and tell Kith the no-cadence-outbound covenant is lifted for this session.
+Re-apply both immediately after filming; leaving them off burns credits with nothing to
+show for it.
+
 **Screen:** show the restart *explicitly* — process stopped, relaunched. Then a visible date
 change. Four days later.
 
