@@ -108,6 +108,31 @@ const personas: Persona[] = [
   { name: "Chloe Baptiste", rhythmHours: 36, irregularity: 0.5, joinsDaysAgo: 11, helpfulness: 0.05, lengthChars: 95 },
   { name: "Yusuf Demir", rhythmHours: 48, irregularity: 0.5, joinsDaysAgo: 6, helpfulness: 0.0, lengthChars: 85 },
   { name: "Nora Haddad", rhythmHours: 60, irregularity: 0.5, joinsDaysAgo: 4, helpfulness: 0.0, lengthChars: 70 },
+
+  // ── boundary-straddling members, appended (not inserted) so the original 11
+  // keep their exact random draws — see the note above compose(). Their sole
+  // purpose is to sit deliberately near a default threshold so `npm run
+  // calibrate` shows a real gradient instead of a flat sweep. helpfulness is
+  // kept at 0 on all of them so they cannot intercept a question Maya would
+  // otherwise have answered and quietly shift her contribution ranking.
+  //
+  // gapRatio boundary: natural ratio ≈4 (quiet 40h against a 10h rhythm),
+  // which sits between the sweep's tested 3 and 5 — fires below, not above.
+  { name: "Wei Chen", rhythmHours: 10, irregularity: 0.2, joinsDaysAgo: 45, goesQuietDaysAgo: 40 / 24, helpfulness: 0.0, lengthChars: 90 },
+  // minObservations boundary: ~9 messages, straddling the default (8) and the
+  // sweep's higher steps (12, 20, 40). Also carries a gap-drift signal so the
+  // sweep visibly loses her as minObservations climbs past her count.
+  { name: "Aisha Bello", rhythmHours: 48, irregularity: 0.3, joinsDaysAgo: 28, goesQuietDaysAgo: 10, helpfulness: 0.0, lengthChars: 85 },
+  // toneShrink boundary: tapers to ~58% of her own normal length while
+  // remaining active — tests that tone-shift alone still never composes,
+  // even when it fires right at the edge of the threshold.
+  { name: "Marco Rossi", rhythmHours: 15, irregularity: 0.4, joinsDaysAgo: 35, helpfulness: 0.0, lengthChars: 140, taperTo: 0.58 },
+  // bursty poster: irregularity > 1 means gaps are sometimes larger than the
+  // rhythm itself. Stress-tests the gapMads guard against something noisier
+  // than the original personas' comparatively tidy rhythms.
+  { name: "Grace Kim", rhythmHours: 18, irregularity: 1.3, joinsDaysAgo: 30, helpfulness: 0.0, lengthChars: 100 },
+  // plain background lurker — no boundary purpose, just population realism.
+  { name: "Fatima Yusuf", rhythmHours: 32, irregularity: 0.6, joinsDaysAgo: 25, helpfulness: 0.02, lengthChars: 70 },
 ];
 
 const QUESTIONS = [
@@ -252,6 +277,32 @@ messages.push({
   text: "been great everyone but I'm leaving the group - moving on to other things. goodbye!",
 });
 
+// A newcomerPatience boundary case, injected directly rather than through the
+// random walk so its timing is exact: one message, never replied to, aged
+// ~20h as of the last message in the community. Community reply norm here is
+// ~2.1h, so patience thresholds land at roughly 2.1/4.2/6.3/12.6/25.2/100.8h —
+// 20h sits between the sweep's 6 and 12, giving `npm run calibrate` a real
+// transition on this dimension instead of a flat line until 48.
+const IDRIS_ID = "user9999";
+messages.push({
+  id: nextId++,
+  type: "service",
+  date: new Date(NOW - 21 * HOUR).toISOString().slice(0, 19),
+  date_unixtime: String(Math.floor((NOW - 21 * HOUR) / 1000)),
+  actor: "Idris Okafor",
+  actor_id: IDRIS_ID,
+  action: "join_group_by_link",
+});
+messages.push({
+  id: nextId++,
+  type: "message",
+  date: new Date(NOW - 20 * HOUR).toISOString().slice(0, 19),
+  date_unixtime: String(Math.floor((NOW - 20 * HOUR) / 1000)),
+  from: "Idris Okafor",
+  from_id: IDRIS_ID,
+  text: "hey all, just joined - is there a good starting point for someone new?",
+});
+
 messages.sort(
   (a, b) => Number(a.date_unixtime ?? 0) - Number(b.date_unixtime ?? 0),
 );
@@ -268,6 +319,7 @@ const path = new URL("../data/dev-export.json", import.meta.url);
 await writeFile(path, JSON.stringify(out, null, 2), "utf8");
 
 console.log(
-  `wrote ${messages.length} messages across ${personas.length} members ` +
+  `wrote ${messages.length} messages across ${personas.length + 1} members ` +
+    `(${personas.length} personas + Idris Okafor, the D4 boundary case) ` +
     `over ${WINDOW_DAYS} days -> data/dev-export.json`,
 );

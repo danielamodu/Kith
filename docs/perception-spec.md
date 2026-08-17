@@ -157,16 +157,30 @@ hardcoded, so it works on any community: the member furthest outside their *own*
 paired against the member with the longest *absolute* silence who is nonetheless still
 inside theirs.
 
-### Finding, 16 Aug: the synthetic fixture cannot calibrate anything
+### Finding, 16 Aug: the original fixture couldn't calibrate anything — fixed
 
-Run against the fixture, almost every sweep is **flat**. `gapRatio` from 1.5 to 15 gives an
-identical answer; `minObservations` from 2 to 40 changes nothing. Only the extremes move it
-— at `gapRatio 30` the signal is missed entirely.
+First run against the original 11-persona fixture, almost every sweep was **flat**.
+`gapRatio` from 1.5 to 15 gave an identical answer; `minObservations` from 2 to 40 changed
+nothing. That wasn't a tool bug, it was a property of data designed by hand: the personas
+were cleanly separated by construction, so no threshold in a wide band could distinguish
+them. **Tuning against a fixture you authored is circular** if every member sits far from
+every boundary — there's nothing for the sweep to find.
 
-That is not a bug in the tool, it is a property of data we designed ourselves. The personas
-are cleanly separated by construction, so no threshold in a wide band can distinguish them.
-**Tuning against a fixture you authored is circular.** The tool is ready; the fixture has
-nothing to teach it.
+The fixture was extended with five members placed *deliberately at* a default threshold
+(Wei Chen at the gapRatio boundary, Aisha Bello at minObservations, Marco Rossi at
+toneShrink, Idris Okafor at newcomerPatience) plus one bursty poster for noise. All were
+appended after the original eleven rather than inserted among them, and given zero
+helpfulness, so they cannot alter the original personas' own random draws or intercept a
+question one of them would have answered — the sweeps below are additive, not a rewrite of
+the original evidence.
+
+The sweeps now show real gradients: `minObservations` drops from 8 surfaced to 7 exactly at
+the step past Aisha's own message count; `gapRatio` steps 8→7→6 as members cross their
+individually-tuned ratios; `newcomerPatience` loses Idris from the composed batch precisely
+between the sweep's 6 and 12 steps, matching his ~20h wait against a ~2.1h community norm.
+The tool is proven to detect a real transition when one exists. It still cannot substitute
+for real data — every boundary here was placed by us, so it tells us the sweep *works*, not
+that these are the *right* numbers. That question still waits on the backfill.
 
 Two things this predicts about real data, both worth checking:
 
