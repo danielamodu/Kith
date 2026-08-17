@@ -25,8 +25,80 @@ import {
   getHistory,
   sendAndVerify,
   SendVerifyError,
+  plainText,
+  type HistoryMessage,
 } from "./minds-client.ts";
 import { readSession, markRestart } from "./demo-session.ts";
+
+// ── presentation transforms — the raw detector/Minds shapes stay untouched;
+// these exist purely so the frontend gets specific, ready-to-render copy
+// instead of generic filler. Kept here, not in registry.ts, since this is
+// UI presentation, not detection.
+
+type WatchEntry = {
+  signals: string[];
+  quietForH: number;
+  quietRatio: number;
+  ans: number;
+};
+
+function headlineFor(m: WatchEntry): string {
+  if (m.signals.includes("gap-drift")) {
+    const days = Math.round(m.quietForH / 24);
+    return days >= 1
+      ? `Quiet for ${days} day${days === 1 ? "" : "s"} — about ${m.quietRatio.toFixed(1)}× their usual rhythm.`
+      : `Quiet for ${Math.round(m.quietForH)}h — about ${m.quietRatio.toFixed(1)}× their usual rhythm.`;
+  }
+  if (m.signals.includes("tone-shift")) {
+    return "Recent messages have gotten noticeably shorter than usual.";
+  }
+  if (m.signals.includes("contribution")) {
+    return `One of the most active people here — ${m.ans} question${m.ans === 1 ? "" : "s"} answered.`;
+  }
+  return "A signal worth a second look.";
+}
+
+function lastSeenFor(quietForH: number): string {
+  if (quietForH < 1) return "active moments ago";
+  if (quietForH < 24) return `active ${Math.round(quietForH)}h ago`;
+  const days = Math.round(quietForH / 24);
+  return `active ${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+type FeedMessage = {
+  id: string;
+  author: string;
+  isKith: boolean;
+  text: string;
+  createdAt: string;
+  unprompted: boolean;
+};
+
+/** Same "no human turn since restart" logic that used to live client-side —
+ *  moved server-side so it's computed once, correctly, for any frontend. */
+function transformFeedMessages(
+  messages: HistoryMessage[],
+  restartAt: string | null,
+): FeedMessage[] {
+  const sorted = [...messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const restart = restartAt ? new Date(restartAt) : null;
+  let sawHumanSinceRestart = false;
+  return sorted.map((m) => {
+    const isKith = m.senderType === 0;
+    const ts = new Date(m.createdAt);
+    const afterRestart = restart !== null && ts > restart;
+    if (!isKith && afterRestart) sawHumanSinceRestart = true;
+    const unprompted = isKith && afterRestart && !sawHumanSinceRestart;
+    return {
+      id: m.id,
+      author: isKith ? "Kith" : "Steward",
+      isKith,
+      text: plainText(m.messageText),
+      createdAt: m.createdAt,
+      unprompted,
+    };
+  });
+}
 
 const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
@@ -105,12 +177,22 @@ app.get("/api/registry", async (_req, res) => {
 });
 
 app.get("/api/watchlist", async (_req, res) => {
-  const data = await readJson(`${DATA}/watchlist.json`, null);
+  const data = await readJson<{ watching: WatchEntry[] } | null>(
+    `${DATA}/watchlist.json`,
+    null,
+  );
   if (!data) {
     res.status(404).json({ error: "No watchlist.json yet — run `npm run registry` first." });
     return;
   }
-  res.json(data);
+  res.json({
+    ...data,
+    watching: data.watching.map((m) => ({
+      ...m,
+      headline: headlineFor(m),
+      lastSeen: lastSeenFor(m.quietForH),
+    })),
+  });
 });
 
 app.get("/api/briefing", async (_req, res) => {
@@ -232,7 +314,11 @@ app.get("/api/live-feed", async (_req, res) => {
   const session = await readSession(SESSION_PATH);
   try {
     const history = await getHistory(API_KEY, session.alias);
-    res.json({ alias: session.alias, restartAt: session.restartAt, messages: history });
+    res.json({
+      alias: session.alias,
+      restartAt: session.restartAt,
+      messages: transformFeedMessages(history, session.restartAt),
+    });
   } catch (err) {
     const message = (err as Error).message;
     const notFound = /404|NOT_FOUND|Conversation not found/i.test(message);
@@ -258,6 +344,20 @@ app.get("/api/budget", async (_req, res) => {
   const log = await readJson<CognitionLogEntry[]>(COGNITION_LOG_PATH, []);
   const totalSpent = log.reduce((sum, e) => sum + e.spent, 0);
   res.json({ liveCallCount: log.length, totalSpent, entries: log });
+});
+
+// ── SPA fallback ─────────────────────────────────────────────────────────
+//
+// The frontend is a client-side-routed single-page app (wouter) — routes
+// like /demo and /demo/feed only exist in the browser's router, not as real
+// files. A link clicked *inside* the app works fine (client-side
+// navigation), but a fresh browser request for /demo — a direct URL, a
+// bookmark, a hard refresh — hits this server directly and needs to get
+// index.html back so the client router can take over and render the right
+// page. Scoped to skip /api/* so an unmatched API route still 404s as JSON
+// instead of silently returning the whole HTML page.
+app.get(/^(?!\/api\/).*/, (_req, res) => {
+  res.sendFile(root("public/index.html"));
 });
 
 const PORT = Number(env.PORT ?? 3131);
