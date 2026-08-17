@@ -43,10 +43,20 @@ async function loadEnv(): Promise<Record<string, string>> {
 
 const env = { ...(await loadEnv()), ...process.env };
 const API_KEY = env.MINDS_BUILDER_API_KEY;
-const MIND_ID = env.KITH_MIND_ID ?? "f3494b3e-f36b-1410-8466-00039ce7df11";
+const MIND_ID = env.KITH_MIND_ID;
 
 if (!API_KEY) {
   console.error("MINDS_BUILDER_API_KEY is not set in .env — the live-answer route will fail.");
+}
+if (!MIND_ID) {
+  // No fallback to a hardcoded Mind on purpose: this repo is meant to be run
+  // by anyone against their own Mind, and silently defaulting to ours would
+  // mean a fresh clone talks to (and spends the cognition of) a Mind that
+  // isn't theirs, without any indication that's what's happening.
+  console.error(
+    "KITH_MIND_ID is not set in .env — the live-answer route will fail.\n" +
+      "  Find your Mind's id with: minds list --pretty",
+  );
 }
 
 const DATA = root("data");
@@ -140,8 +150,12 @@ app.get("/api/live-answer", async (_req, res) => {
 const LIVE_QUESTION = "Is anyone in the community struggling right now?";
 
 app.post("/api/live-answer/refresh", async (req, res) => {
-  if (!API_KEY) {
-    res.status(500).json({ error: "MINDS_BUILDER_API_KEY not configured on the server." });
+  if (!API_KEY || !MIND_ID) {
+    res.status(500).json({
+      error: !API_KEY
+        ? "MINDS_BUILDER_API_KEY not configured on the server."
+        : "KITH_MIND_ID not configured on the server — find yours with `minds list --pretty`.",
+    });
     return;
   }
   if (req.body?.confirm !== true) {

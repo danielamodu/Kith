@@ -16,6 +16,7 @@
     "backfill": "node src/cli-backfill.ts",
     "poll": "node src/cli-poll.ts",
     "discord": "node src/cli-discord.ts",
+    "push": "node src/cli-push.ts",
     "web": "node src/server.ts",
     "web:dev": "node --watch src/server.ts",
     "pretest": "node src/fixture.ts",

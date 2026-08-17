@@ -1,14 +1,16 @@
 /**
- * Build the two payloads that go to the Mind, and report their cost.
+ * Build the three payloads that go to the Mind, and report their cost.
  *
  * Run: node src/cli-registry.ts [export-path]
- * Writes: data/registry.json, data/briefing.json
+ *      node src/cli-registry.ts --store       (real backfill + live traffic, merged)
+ * Writes: data/registry.json, data/briefing.json, data/watchlist.json
  */
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { loadExport } from "./ingest.ts";
 import { buildMemberStates } from "./members.ts";
 import { runAll, communityReplyNorm } from "./detectors.ts";
+import { MessageStore } from "./store.ts";
 import {
   buildRegistry,
   buildBriefing,
@@ -16,11 +18,22 @@ import {
   estimateTokens,
 } from "./registry.ts";
 
-const path =
-  process.argv[2] ??
-  fileURLToPath(new URL("../data/dev-export.json", import.meta.url));
+const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
-const community = await loadExport(path);
+// --store reads the accumulated store (backfill + live merged) — the real
+// path for self-hosting; otherwise a single export file, the fast path for
+// iterating on the fixture. Mirrors cli-detect.ts's flag exactly.
+const useStore = process.argv.includes("--store");
+const path =
+  process.argv.find((a) => !a.startsWith("--") && a.endsWith(".json")) ??
+  root("data/dev-export.json");
+
+const community = useStore
+  ? await new MessageStore(root("data/store.jsonl"), root("data/store-state.json")).toCommunity(
+      (await new MessageStore(root("data/store.jsonl"), root("data/store-state.json")).readState())
+        .chatTitle ?? "community",
+    )
+  : await loadExport(path);
 const states = buildMemberStates(community);
 const asOf = community.to;
 const { observations, composites } = runAll(community, states, asOf);
@@ -35,8 +48,7 @@ const registry = buildRegistry(
 const briefing = buildBriefing(community, composites, asOf);
 const watchlist = buildWatchlist(community, states, observations, asOf);
 
-const out = (name: string) =>
-  fileURLToPath(new URL(`../data/${name}`, import.meta.url));
+const out = (name: string) => root(`data/${name}`);
 
 await writeFile(out("registry.json"), JSON.stringify(registry, null, 2), "utf8");
 await writeFile(out("briefing.json"), JSON.stringify(briefing, null, 2), "utf8");

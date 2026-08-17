@@ -5,6 +5,27 @@ live Mind, and paid real money in cognition to get two non-obvious bugs fixed �
 rather than rebuild it. This doc is the full sitemap, what's real vs illustrative on each
 page, and the API contract to build against.
 
+## Stack
+
+**Backend: Node/TypeScript, already built (`src/server.ts`, `src/minds-client.ts`) — don't
+touch the language, just call it.** It runs via Node's native TypeScript support, no build
+step, started with `npm run web`.
+
+**Frontend: any language or framework — genuinely does not matter, use whatever's strongest.**
+React, Vue, Svelte, plain HTML/CSS/JS are all fine. The only two real requirements:
+
+1. It talks to the existing `/api/*` JSON contract below over plain HTTP — no other backend,
+   no reimplementing the Minds integration.
+2. **The final output must be static files that drop into `public/`**, served by the same
+   Express process as the API. If the frontend tooling needs a build step (Vite, webpack,
+   whatever) that's fine — build once, output static assets into `public/`. What must *not*
+   happen is a two-process setup (a separate frontend dev server proxying to the backend) as
+   the thing that has to be running to demo or film — one `npm run web`, one port, one
+   process that could go wrong on filming day, not two.
+
+No server-side rendering framework is needed or wanted. This is a handful of mostly-static
+views over one small JSON API — a client-rendered static build is simpler and sufficient.
+
 ---
 
 ## The one-line product

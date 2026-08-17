@@ -185,7 +185,7 @@ src/
                                                     (send only — every read is direct HTTP)
   demo-session.ts, server.ts                       the web UI's backend
   cli-*.ts                                        fixture, ingest, detect, registry, backfill,
-                                                    poll, discord, calibrate
+                                                    poll, discord, calibrate, push
   *.test.ts                                        regression tests protecting the thesis,
                                                     not the code
 public/                    the web UI — Compare (Beat A) and Live Feed (Beat B), vanilla JS,
@@ -198,6 +198,8 @@ docs/
   architecture.md          the Minds integration, settled from hands-on testing
   platform-findings.md     what was verified against the live Minds API, and when it corrected
                             an earlier assumption
+  self-hosting.md          run this on your own community — the full setup, end to end
+  manus-ux-brief.md        sitemap and API contract for the frontend rebuild
   telegram-setup.md, discord-setup.md
   evidence/                dated records of things proven against the live Mind
 demo-script.md             the 1:50 submission video, written before the build
