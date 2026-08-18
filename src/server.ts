@@ -25,80 +25,15 @@ import {
   getHistory,
   sendAndVerify,
   SendVerifyError,
-  plainText,
-  type HistoryMessage,
 } from "./minds-client.ts";
 import { readSession, markRestart } from "./demo-session.ts";
-
-// ── presentation transforms — the raw detector/Minds shapes stay untouched;
-// these exist purely so the frontend gets specific, ready-to-render copy
-// instead of generic filler. Kept here, not in registry.ts, since this is
-// UI presentation, not detection.
-
-type WatchEntry = {
-  signals: string[];
-  quietForH: number;
-  quietRatio: number;
-  ans: number;
-};
-
-function headlineFor(m: WatchEntry): string {
-  if (m.signals.includes("gap-drift")) {
-    const days = Math.round(m.quietForH / 24);
-    return days >= 1
-      ? `Quiet for ${days} day${days === 1 ? "" : "s"} — about ${m.quietRatio.toFixed(1)}× their usual rhythm.`
-      : `Quiet for ${Math.round(m.quietForH)}h — about ${m.quietRatio.toFixed(1)}× their usual rhythm.`;
-  }
-  if (m.signals.includes("tone-shift")) {
-    return "Recent messages have gotten noticeably shorter than usual.";
-  }
-  if (m.signals.includes("contribution")) {
-    return `One of the most active people here — ${m.ans} question${m.ans === 1 ? "" : "s"} answered.`;
-  }
-  return "A signal worth a second look.";
-}
-
-function lastSeenFor(quietForH: number): string {
-  if (quietForH < 1) return "active moments ago";
-  if (quietForH < 24) return `active ${Math.round(quietForH)}h ago`;
-  const days = Math.round(quietForH / 24);
-  return `active ${days} day${days === 1 ? "" : "s"} ago`;
-}
-
-type FeedMessage = {
-  id: string;
-  author: string;
-  isKith: boolean;
-  text: string;
-  createdAt: string;
-  unprompted: boolean;
-};
-
-/** Same "no human turn since restart" logic that used to live client-side —
- *  moved server-side so it's computed once, correctly, for any frontend. */
-function transformFeedMessages(
-  messages: HistoryMessage[],
-  restartAt: string | null,
-): FeedMessage[] {
-  const sorted = [...messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const restart = restartAt ? new Date(restartAt) : null;
-  let sawHumanSinceRestart = false;
-  return sorted.map((m) => {
-    const isKith = m.senderType === 0;
-    const ts = new Date(m.createdAt);
-    const afterRestart = restart !== null && ts > restart;
-    if (!isKith && afterRestart) sawHumanSinceRestart = true;
-    const unprompted = isKith && afterRestart && !sawHumanSinceRestart;
-    return {
-      id: m.id,
-      author: isKith ? "Kith" : "Steward",
-      isKith,
-      text: plainText(m.messageText),
-      createdAt: m.createdAt,
-      unprompted,
-    };
-  });
-}
+import {
+  headlineFor,
+  lastSeenFor,
+  transformFeedMessages,
+  findPronounIssues,
+  type WatchEntry,
+} from "./presentation.ts";
 
 const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
@@ -218,18 +153,44 @@ app.get("/api/baseline", async (_req, res) => {
 });
 
 app.get("/api/live-answer", async (_req, res) => {
-  const cached = await readJson(LIVE_ANSWER_PATH, null);
-  res.json(
-    cached ?? {
+  const cached = await readJson<{ answer?: string } | null>(LIVE_ANSWER_PATH, null);
+  if (!cached) {
+    res.json({
       question: null,
       answer: null,
       capturedAt: null,
       note: "No live answer captured yet. Use the refresh button to ask Kith once.",
-    },
+    });
+    return;
+  }
+  // Recomputed on every read, not just at capture time, so a registry change
+  // (someone's stated pronoun gets added, say) re-evaluates this without
+  // needing a fresh, paid capture.
+  const registry = await readJson<{ members?: Array<{ name: string; pronouns: string }> }>(
+    `${DATA}/registry.json`,
+    { members: [] },
   );
+  const pronounIssues = cached.answer
+    ? findPronounIssues(cached.answer, registry.members ?? [])
+    : [];
+  res.json({ ...cached, pronounIssues });
 });
 
 const LIVE_QUESTION = "Is anyone in the community struggling right now?";
+// Sent to the Mind, not shown on screen — the displayed "question" stays
+// exactly what the baseline panel asks, for the side-by-side framing to
+// hold. This is where the pronoun instruction gets reinforced: the
+// structural fix (registry.pronouns) has been observed to hold for a
+// question's primary subject but not reliably for people mentioned only in
+// passing deeper in the answer (docs/evidence/2026-08-17-pronoun-guard
+// -caught-a-real-case.md) — restating the rule explicitly, every time, is
+// the cheap half of the fix; findPronounIssues below is the other half.
+const LIVE_PROMPT =
+  `${LIVE_QUESTION} When you refer to any member by name, including anyone ` +
+  `mentioned only briefly or in passing, use their stated pronouns from the ` +
+  `registry — they/them unless a pronoun is explicitly recorded for that ` +
+  `specific person. This applies to every person named in your answer, not ` +
+  `only whoever the answer is mainly about.`;
 
 app.post("/api/live-answer/refresh", async (req, res) => {
   if (!API_KEY || !MIND_ID) {
@@ -259,7 +220,7 @@ app.post("/api/live-answer/refresh", async (req, res) => {
   let reply: Awaited<ReturnType<typeof sendAndVerify>>;
   const alias = freshAlias("kith-web-beata");
   try {
-    reply = await sendAndVerify(API_KEY, MIND_ID, alias, LIVE_QUESTION);
+    reply = await sendAndVerify(API_KEY, MIND_ID, alias, LIVE_PROMPT);
   } catch (err) {
     const message = err instanceof SendVerifyError
       ? err.message
@@ -268,12 +229,19 @@ app.post("/api/live-answer/refresh", async (req, res) => {
     return;
   }
 
+  const registry = await readJson<{ members?: Array<{ name: string; pronouns: string }> }>(
+    `${DATA}/registry.json`,
+    { members: [] },
+  );
+  const pronounIssues = findPronounIssues(reply.text, registry.members ?? []);
+
   const record = {
     question: LIVE_QUESTION,
     answer: reply.text,
     html: reply.html,
     capturedAt: reply.createdAt,
     alias,
+    pronounIssues,
   };
   await writeJson(LIVE_ANSWER_PATH, record);
 
