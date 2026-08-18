@@ -19,6 +19,7 @@
     "push": "node src/cli-push.ts",
     "web": "node src/server.ts",
     "web:dev": "node --watch src/server.ts",
+    "web:build": "npm --prefix frontend install --legacy-peer-deps && npm --prefix frontend run build && node scripts/deploy-frontend.ts",
     "pretest": "node src/fixture.ts",
     "test": "node --test \"src/*.test.ts\""
   },
