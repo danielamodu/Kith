@@ -1,13 +1,11 @@
 {
   "buildCommand": "npm run fixture && npm run registry && npm run web:build",
-  "outputDirectory": "public",
   "functions": {
     "api/index.ts": {
-      "includeFiles": "{data,content}/**"
+      "includeFiles": "{data,content,public}/**"
     }
   },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/api" }
   ]
 }
