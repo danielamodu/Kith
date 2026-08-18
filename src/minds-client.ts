@@ -220,7 +220,12 @@ export async function sendAndVerify(
         // history poll below is the real check either way, so don't reject
         // on this alone; only truly fatal spawn errors (CLI not found) should
         // stop the flow before verification gets a chance to look for real.
-        if (err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+        // ExecException.code is typed as `number` (process exit code), but a
+        // spawn failure like "binary not found" actually carries a *string*
+        // code ("ENOENT") at runtime — a real gap between Node's types and
+        // its own behavior, not a mistake. `unknown` first, as TS's own
+        // TS2352 suggests, rather than pretending the types overlap.
+        if (err && (err as unknown as NodeJS.ErrnoException).code === "ENOENT") {
           reject(new Error("`minds` CLI not found — is it installed globally?"));
         } else {
           resolve();
