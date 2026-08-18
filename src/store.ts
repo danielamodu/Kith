@@ -46,7 +46,11 @@ export class MessageStore {
 
   async readState(): Promise<StoreState> {
     if (!existsSync(this.statePath)) return { offset: 0, messageCount: 0 };
-    return JSON.parse(await readFile(this.statePath, "utf8")) as StoreState;
+    try {
+      return JSON.parse(await readFile(this.statePath, "utf8")) as StoreState;
+    } catch {
+      return { offset: 0, messageCount: 0 };
+    }
   }
 
   async writeState(s: StoreState): Promise<void> {

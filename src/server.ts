@@ -34,6 +34,7 @@ import {
   findPronounIssues,
   type WatchEntry,
 } from "./presentation.ts";
+import { createStore } from "./kv-store.ts";
 
 const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
@@ -91,6 +92,16 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(value, null, 2), "utf8");
 }
+
+// The live-answer cache and the cognition log are runtime state — written
+// by one request, read by a later one — not build-time artifacts like
+// registry/watchlist/briefing (those are plain readJson/writeJson on
+// purpose: they're regenerated fresh at every deploy, nothing depends on a
+// write from one request surviving to the next). Routed through
+// kv-store.ts's SmallStore so they behave correctly on Vercel too; see that
+// file's comment for why this specific state is the state that needed it.
+const liveAnswerStore = createStore(() => LIVE_ANSWER_PATH);
+const cognitionLogStore = createStore(() => COGNITION_LOG_PATH);
 
 type CognitionLogEntry = {
   at: string;
@@ -153,7 +164,7 @@ app.get("/api/baseline", async (_req, res) => {
 });
 
 app.get("/api/live-answer", async (_req, res) => {
-  const cached = await readJson<{ answer?: string } | null>(LIVE_ANSWER_PATH, null);
+  const cached = await liveAnswerStore.read<{ answer?: string } | null>("live-answer", null);
   if (!cached) {
     res.json({
       question: null,
@@ -243,19 +254,33 @@ app.post("/api/live-answer/refresh", async (req, res) => {
     alias,
     pronounIssues,
   };
-  await writeJson(LIVE_ANSWER_PATH, record);
 
-  const after = await getCognitionBalance(API_KEY, MIND_ID).catch(() => null);
-  if (before && after) {
-    const log = await readJson<CognitionLogEntry[]>(COGNITION_LOG_PATH, []);
-    log.push({
-      at: new Date().toISOString(),
-      question: LIVE_QUESTION,
-      before: before.cognition,
-      after: after.cognition,
-      spent: Math.max(0, before.cognition - after.cognition),
-    });
-    await writeJson(COGNITION_LOG_PATH, log);
+  // The send above already spent real cognition — that's real regardless
+  // of what happens next. A persistence failure (e.g. no KV configured on
+  // a read-only deployment) must never cost the caller the answer they
+  // already paid for. Same principle as the balance-check comment above,
+  // applied to the write side this time.
+  try {
+    await liveAnswerStore.write("live-answer", record);
+  } catch (err) {
+    console.error("Failed to persist live-answer (answer still returned):", err);
+  }
+
+  try {
+    const after = await getCognitionBalance(API_KEY, MIND_ID).catch(() => null);
+    if (before && after) {
+      const log = await cognitionLogStore.read<CognitionLogEntry[]>("cognition-log", []);
+      log.push({
+        at: new Date().toISOString(),
+        question: LIVE_QUESTION,
+        before: before.cognition,
+        after: after.cognition,
+        spent: Math.max(0, before.cognition - after.cognition),
+      });
+      await cognitionLogStore.write("cognition-log", log);
+    }
+  } catch (err) {
+    console.error("Failed to update cognition log (answer still returned):", err);
   }
 
   res.json(record);
@@ -309,7 +334,7 @@ app.get("/api/live-feed", async (_req, res) => {
 // ── budget strip (free — local bookkeeping only) ────────────────────────────
 
 app.get("/api/budget", async (_req, res) => {
-  const log = await readJson<CognitionLogEntry[]>(COGNITION_LOG_PATH, []);
+  const log = await cognitionLogStore.read<CognitionLogEntry[]>("cognition-log", []);
   const totalSpent = log.reduce((sum, e) => sum + e.spent, 0);
   res.json({ liveCallCount: log.length, totalSpent, entries: log });
 });

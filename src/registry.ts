@@ -102,13 +102,27 @@ export type Registry = {
   members: RegistryEntry[];
 };
 
-export function slugify(name: string): string {
-  return name
+/**
+ * NFKD + diacritic-stripping only helps Latin-script names — a name that's
+ * entirely CJK, Arabic, Cyrillic, Thai, or emoji has nothing left after
+ * `[^a-z0-9]+` strips it, so every such member collides on the same empty
+ * slug ("community.member." for all of them), silently merging different
+ * people's histories under one key. `id` (the platform's own stable member
+ * id — Discord/Telegram user id) is the fallback specifically for that
+ * empty case, not applied otherwise: changing the slug format for the
+ * common Latin-name case would touch every existing key and test for a
+ * problem that case doesn't have.
+ */
+export function slugify(name: string, id?: string): string {
+  const base = name
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+  if (base) return base;
+  if (id) return `id-${id.replace(/[^a-zA-Z0-9]+/g, "").slice(0, 12).toLowerCase()}`;
+  return "unnamed";
 }
 
 /** Mirrors MIN_OBSERVATIONS in detectors.ts — below this a rhythm is noise. */
@@ -127,7 +141,7 @@ export function buildRegistry(
       const rhythm = round1(s.medianGapHours);
       const quiet = round1(s.currentGapHours);
       return {
-        key: `community.member.${slugify(s.name)}`,
+        key: `community.member.${slugify(s.name, s.id)}`,
         name: s.name,
         joined: isoDay(s.firstSeen),
         lastSeen: isoDay(s.lastSeen),
@@ -154,7 +168,7 @@ export function buildRegistry(
       const waited = o.evidence[1];
       return {
         name: o.memberName,
-        key: `community.member.${slugify(o.memberName)}`,
+        key: `community.member.${slugify(o.memberName, o.memberId)}`,
         joined: s ? isoDay(s.firstSeen) : "",
         waitingH: waited
           ? round1(
@@ -298,7 +312,7 @@ export function buildWatchlist(
       const rhythm = round1(s.medianGapHours);
       const quiet = round1(s.currentGapHours);
       return {
-        key: `community.member.${slugify(s.name)}`,
+        key: `community.member.${slugify(s.name, s.id)}`,
         name: s.name,
         pronouns: "they/them (not stated)",
         signals: kinds,
@@ -321,7 +335,7 @@ export function buildWatchlist(
       const waited = o.evidence[1];
       return {
         name: o.memberName,
-        key: `community.member.${slugify(o.memberName)}`,
+        key: `community.member.${slugify(o.memberName, o.memberId)}`,
         joined: s ? isoDay(s.firstSeen) : "",
         waitingH: waited
           ? round1(

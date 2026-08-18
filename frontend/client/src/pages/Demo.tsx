@@ -51,10 +51,15 @@ export default function Demo() {
     setConfirmOpen(false);
     setLoading(true);
     toast("Kith is taking one deliberate look…");
-    const next = await api.post("/api/live-answer/refresh", { confirm: true }, { ...fallbackLive, answer: "Kith is looking at the room right now. The next cached answer will land here." });
-    setLive(next);
-    setLoading(false);
-    toast("The Mind has a fresh read.");
+    try {
+      const next = await api.postOrThrow<LiveAnswer>("/api/live-answer/refresh", { confirm: true });
+      setLive(next);
+      toast("The Mind has a fresh read.");
+    } catch (err) {
+      toast(`Live read failed: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return <PageShell eyebrow="Live community mind · public demo" showBudget>

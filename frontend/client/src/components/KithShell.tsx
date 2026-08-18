@@ -60,6 +60,23 @@ export const api = {
       return fallback;
     }
   },
+  // For actions where a failure must never look like success — spending
+  // real cognition and silently falling back to filler text is actively
+  // misleading, unlike a read falling back to illustrative fixture data,
+  // which is a deliberate and honest degradation. Throws instead of
+  // swallowing, so the caller can show what actually happened.
+  async postOrThrow<T>(path: string, body: unknown): Promise<T> {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}) as Record<string, unknown>);
+    if (!response.ok) {
+      throw new Error(typeof data.error === "string" ? data.error : `Request failed: ${response.status}`);
+    }
+    return data as T;
+  },
 };
 
 export function useBudget() {

@@ -200,14 +200,26 @@ export async function sendAndVerify(
   // pattern actually designed for "one shell command, I control the
   // quoting." cmd.exe quoting: wrap each arg in double quotes, double any
   // internal quotes to escape them.
+  //
+  // The message text is passed as `-` (the CLI's documented stdin marker:
+  // `echo "Hello" | minds send main -`) rather than inline on the command
+  // line, and piped via stdin instead. Two reasons: cmd.exe has an ~8,191
+  // character command-line limit, and this project's own registry payloads
+  // (data/registry.json is already ~8.6KB before shell-quoting doubles
+  // every embedded quote) blow past that when pushed via this same
+  // function — a real, silent failure this fixes, not a hypothetical one.
+  // Every remaining argument is either machine-generated (the alias, from
+  // freshAlias()) or a constant, so there's nothing here that needs the
+  // text's own quoting concerns.
   const cmdQuote = (s: string) => `"${s.replace(/"/g, '""')}"`;
-  const command = ["minds.cmd", "send", alias, text, "--wait", "--timeout", "90000"]
+  const mindsBin = process.platform === "win32" ? "minds.cmd" : "minds";
+  const command = [mindsBin, "send", alias, "-", "--wait", "--timeout", "90000"]
     .map(cmdQuote)
     .join(" ");
 
   const { exec } = await import("node:child_process");
   await new Promise<void>((resolve, reject) => {
-    exec(
+    const child = exec(
       command,
       {
         env: { ...process.env, MINDS_BUILDER_API_KEY: apiKey },
@@ -232,6 +244,7 @@ export async function sendAndVerify(
         }
       },
     );
+    child.stdin?.end(text, "utf8");
   });
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
