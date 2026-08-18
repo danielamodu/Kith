@@ -23,8 +23,8 @@ import {
   freshAlias,
   getCognitionBalance,
   getHistory,
-  sendAndVerify,
-  SendVerifyError,
+  sendOnly,
+  findReply,
 } from "./minds-client.ts";
 import { readSession, markRestart } from "./demo-session.ts";
 import {
@@ -213,6 +213,13 @@ const LIVE_PROMPT =
   `specific person. This applies to every person named in your answer, not ` +
   `only whoever the answer is mainly about.`;
 
+// Split into a fast kick-off (this route) plus a separate free poll
+// (/api/live-answer/status, below) — same reason as the setup wizard's
+// push: a real reply has measured 76-111s live, past what one Vercel
+// function invocation can hold open (maxDuration 60s in vercel.json). This
+// route used to block on a single call; that meant it could actually reach
+// the Mind and spend real cognition, then still time out and report
+// "failed" on a send that had already succeeded.
 app.post("/api/live-answer/refresh", async (req, res) => {
   if (!API_KEY || !MIND_ID) {
     res.status(500).json({
@@ -229,24 +236,43 @@ app.post("/api/live-answer/refresh", async (req, res) => {
     return;
   }
 
-  // Balance checks are cost bookkeeping, not the point of this route — a
-  // send that actually goes through is a real, paid-for result and must be
-  // saved regardless of whether reading the balance before/after succeeds.
-  // (This wasn't always true here: an earlier version let a balance-check
-  // bug throw *after* a successful send, discarding a real answer that had
-  // already cost real cognition. Never again — see getCognitionBalance's
-  // own comment in minds-client.ts for what actually went wrong.)
-  const before = await getCognitionBalance(API_KEY, MIND_ID).catch(() => null);
-
-  let reply: Awaited<ReturnType<typeof sendAndVerify>>;
+  // Cost bookkeeping, not the point of this route — a send that actually
+  // goes through is real and paid-for regardless of whether this succeeds.
+  const before = await getCognitionBalance(API_KEY, MIND_ID).then((b) => b.cognition).catch(() => null);
   const alias = freshAlias("kith-web-beata");
   try {
-    reply = await sendAndVerify(API_KEY, MIND_ID, alias, LIVE_PROMPT);
+    const { sentAt, afterFingerprint } = await sendOnly(API_KEY, MIND_ID, alias, LIVE_PROMPT);
+    res.json({ alias, sentAt, afterFingerprint, sentMessageText: LIVE_PROMPT, before });
   } catch (err) {
-    const message = err instanceof SendVerifyError
-      ? err.message
-      : `Live query failed: ${(err as Error).message}`;
-    res.status(502).json({ error: message });
+    res.status(502).json({ error: `Live query failed: ${(err as Error).message}` });
+  }
+});
+
+// Free — poll after /api/live-answer/refresh until { done: true }.
+app.post("/api/live-answer/status", async (req, res) => {
+  if (!API_KEY) {
+    res.status(500).json({ error: "MINDS_BUILDER_API_KEY not configured on the server." });
+    return;
+  }
+  const { alias, sentMessageText, afterFingerprint, sentAfter, before } = req.body ?? {};
+  if (typeof alias !== "string" || !alias.trim()) {
+    res.status(400).json({ error: "Missing alias." });
+    return;
+  }
+
+  let reply: Awaited<ReturnType<typeof findReply>>;
+  try {
+    reply = await findReply(API_KEY, alias.trim(), {
+      sentMessageText: typeof sentMessageText === "string" ? sentMessageText : undefined,
+      afterFingerprint: typeof afterFingerprint === "string" ? afterFingerprint : undefined,
+      sentAfter: typeof sentAfter === "string" ? sentAfter : undefined,
+    });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+    return;
+  }
+  if (!reply) {
+    res.json({ done: false });
     return;
   }
 
@@ -255,7 +281,6 @@ app.post("/api/live-answer/refresh", async (req, res) => {
     { members: [] },
   );
   const pronounIssues = findPronounIssues(reply.text, registry.members ?? []);
-
   const record = {
     question: LIVE_QUESTION,
     answer: reply.text,
@@ -265,35 +290,36 @@ app.post("/api/live-answer/refresh", async (req, res) => {
     pronounIssues,
   };
 
-  // The send above already spent real cognition — that's real regardless
-  // of what happens next. A persistence failure (e.g. no KV configured on
-  // a read-only deployment) must never cost the caller the answer they
-  // already paid for. Same principle as the balance-check comment above,
-  // applied to the write side this time.
+  // The send already spent real cognition — that's real regardless of what
+  // happens next. A persistence failure (e.g. no KV configured on a
+  // read-only deployment) must never cost the caller the answer they
+  // already paid for.
   try {
     await liveAnswerStore.write("live-answer", record);
   } catch (err) {
     console.error("Failed to persist live-answer (answer still returned):", err);
   }
 
-  try {
-    const after = await getCognitionBalance(API_KEY, MIND_ID).catch(() => null);
-    if (before && after) {
-      const log = await cognitionLogStore.read<CognitionLogEntry[]>("cognition-log", []);
-      log.push({
-        at: new Date().toISOString(),
-        question: LIVE_QUESTION,
-        before: before.cognition,
-        after: after.cognition,
-        spent: Math.max(0, before.cognition - after.cognition),
-      });
-      await cognitionLogStore.write("cognition-log", log);
+  if (MIND_ID && typeof before === "number") {
+    try {
+      const after = await getCognitionBalance(API_KEY, MIND_ID).catch(() => null);
+      if (after) {
+        const log = await cognitionLogStore.read<CognitionLogEntry[]>("cognition-log", []);
+        log.push({
+          at: new Date().toISOString(),
+          question: LIVE_QUESTION,
+          before,
+          after: after.cognition,
+          spent: Math.max(0, before - after.cognition),
+        });
+        await cognitionLogStore.write("cognition-log", log);
+      }
+    } catch (err) {
+      console.error("Failed to update cognition log (answer still returned):", err);
     }
-  } catch (err) {
-    console.error("Failed to update cognition log (answer still returned):", err);
   }
 
-  res.json(record);
+  res.json({ done: true, ...record });
 });
 
 // ── Beat B: fixed-alias live feed, restart marker ───────────────────────────
@@ -445,9 +471,20 @@ app.post("/api/setup/push", async (req, res) => {
   }
 });
 
-// Free — poll after /api/setup/push until { done: true }.
+// Free — poll after /api/setup/push until { done: true }. Also where the
+// creator's own spend gets surfaced back to them: startPush captures
+// `before` and hands it back to the client, which resends it here once a
+// reply is found, and this computes `spent` for the response. This is the
+// fix for the earlier gap where the web wizard's push spent real cognition
+// on a creator's own Mind with no record of it anywhere the app showed
+// them. Deliberately NOT written to cognitionLogStore/GET /api/budget —
+// that store and the budget strip it feeds are specifically this site's
+// own demo-Mind spend tracking; folding a third-party creator's spend on
+// their own, different Mind into that shared number would corrupt it, not
+// add transparency. This response is where their own spend is transparent
+// to them instead.
 app.post("/api/setup/push/status", async (req, res) => {
-  const { apiKey, alias, sentMessageText, afterFingerprint } = req.body ?? {};
+  const { apiKey, mindId, alias, sentMessageText, afterFingerprint, sentAfter, before } = req.body ?? {};
   if (typeof apiKey !== "string" || !apiKey.trim() || typeof alias !== "string" || !alias.trim()) {
     res.status(400).json({ error: "Missing apiKey or alias." });
     return;
@@ -456,8 +493,18 @@ app.post("/api/setup/push/status", async (req, res) => {
     const reply = await checkPush(apiKey.trim(), alias.trim(), {
       sentMessageText: typeof sentMessageText === "string" ? sentMessageText : "",
       ...(typeof afterFingerprint === "string" ? { afterFingerprint } : {}),
+      ...(typeof sentAfter === "string" ? { sentAfter } : {}),
     });
-    res.json(reply ? { done: true, ...reply } : { done: false });
+    if (!reply) {
+      res.json({ done: false });
+      return;
+    }
+    let spent: number | null = null;
+    if (typeof mindId === "string" && mindId.trim() && typeof before === "number") {
+      const after = await getCognitionBalance(apiKey.trim(), mindId.trim()).catch(() => null);
+      if (after) spent = Math.max(0, before - after.cognition);
+    }
+    res.json({ done: true, ...reply, spent });
   } catch (err) {
     onboardingError(res, err);
   }

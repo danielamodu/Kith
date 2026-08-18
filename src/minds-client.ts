@@ -53,7 +53,7 @@ export type HistoryMessage = {
   conversationId: string;
   messageId: string;
   senderId: string;
-  /** 0 = the Mind, 1 = the human steward, by observation */
+  /** 0 or 2 = the Mind, 1 = the human steward — the library normalises both Mind encodings itself */
   senderType: number;
   senderEmail: string;
   recipientId: string;
@@ -71,8 +71,41 @@ export function listConversations(apiKey: string): Promise<Conversation[]> {
   return client(apiKey).listConversations();
 }
 
-export function getHistory(apiKey: string, alias: string): Promise<HistoryMessage[]> {
-  return client(apiKey).getHistory(alias) as Promise<HistoryMessage[]>;
+/**
+ * The library's own MessageRecord marks id/senderType/createdAt/messageText
+ * as optional/nullable — HistoryMessage above declares them required because
+ * every consumer in this codebase (presentation.ts included) reasonably
+ * expects that. Normalise once, here, rather than making every consumer
+ * guard the same fields individually.
+ */
+function normaliseHistoryRow(row: MessageRecord): HistoryMessage {
+  return {
+    id: String(row.id ?? row.messageId ?? row.fingerprint),
+    fingerprint: row.fingerprint,
+    conversationId: String(row.conversationId ?? ""),
+    messageId: String(row.messageId ?? row.fingerprint),
+    senderId: String(row.senderId ?? ""),
+    // Unknown sender type defaults to "human" (1), not "Kith" (0/2) — the
+    // safer failure mode for anything gating on "is this an autonomous
+    // Kith message" (see presentation.ts's transformFeedMessages).
+    senderType: typeof row.senderType === "number" ? row.senderType : 1,
+    senderEmail: String(row.senderEmail ?? ""),
+    recipientId: String(row.recipientId ?? ""),
+    recipientEmail: String(row.recipientEmail ?? ""),
+    messageText: row.messageText ?? "",
+    attachments: row.attachments ?? [],
+    status: String(row.status ?? ""),
+    createdAt: row.createdAt ?? "",
+  };
+}
+
+export async function getHistory(
+  apiKey: string,
+  alias: string,
+  opts: { limit?: number } = {},
+): Promise<HistoryMessage[]> {
+  const rows = await client(apiKey).getHistory(alias, opts);
+  return (rows as MessageRecord[]).map(normaliseHistoryRow);
 }
 
 export async function ensureConversation(
@@ -133,6 +166,54 @@ ${registryJson}`;
 export class SendVerifyError extends Error {}
 
 /**
+ * Shared prelude for both sendOnly and sendAndVerify: ensure the
+ * conversation exists, capture a fingerprint high-water-mark, send.
+ * Extracted so the two callers can't drift — they used to duplicate this
+ * near-verbatim.
+ *
+ * Two deliberate error-tolerance choices, both restoring behaviour the
+ * pre-rewrite CLI-based version had and this rewrite initially dropped:
+ *
+ *   - getLatestHistoryFingerprint's failure is swallowed regardless of
+ *     cause. That's fine, not just convenient: findReply below applies an
+ *     independent `sentAfter` timestamp floor, so a missing fingerprint
+ *     degrades to timestamp-only ordering rather than no ordering at all —
+ *     it doesn't silently disable the safety net the way it did before.
+ *   - sendMessage's failure is logged, not thrown. A network error can fire
+ *     after the request was actually delivered and processed (the response
+ *     was what got lost) — throwing here would report "failed" on a send
+ *     that actually succeeded, and a caller that then retries gets a
+ *     second real conversation and a second real charge with no way to
+ *     notice. Verification (waitForReply / findReply's poll) is the real
+ *     check either way, exactly as the old CLI-based version reasoned.
+ */
+async function prepareSend(
+  c: ReturnType<typeof client>,
+  mindId: string,
+  alias: string,
+  text: string,
+): Promise<{ sentAt: string; afterFingerprint?: string }> {
+  await c.ensureConversation(alias, mindId);
+
+  let afterFingerprint: string | undefined;
+  try {
+    afterFingerprint = await c.getLatestHistoryFingerprint(alias);
+  } catch {
+    // See function comment — real failures here are covered by findReply's
+    // own sentAfter floor, not just the "no history yet" case.
+  }
+
+  const sentAt = new Date().toISOString();
+  try {
+    await c.sendMessage({ alias, messageText: text });
+  } catch (err) {
+    console.error(`sendMessage may still have gone through for ${alias}: ${(err as Error).message}`);
+  }
+
+  return { sentAt, ...(afterFingerprint !== undefined ? { afterFingerprint } : {}) };
+}
+
+/**
  * Send-only, no waiting — for callers that poll for the reply separately
  * instead of holding one request open. Exists because measured reply
  * latency for a substantive instruction (e.g. "store this whole registry")
@@ -143,56 +224,63 @@ export class SendVerifyError extends Error {}
  * plus a separate, free, poll-able read (see findReply below) rather than
  * a longer synchronous timeout that will still eventually be too short.
  */
-export async function sendOnly(
+export function sendOnly(
   apiKey: string,
   mindId: string,
   alias: string,
   text: string,
 ): Promise<{ sentAt: string; afterFingerprint?: string }> {
-  const c = client(apiKey);
-  await c.ensureConversation(alias, mindId);
-  let afterFingerprint: string | undefined;
-  try {
-    afterFingerprint = await c.getLatestHistoryFingerprint(alias);
-  } catch {
-    // No prior history is fine.
-  }
-  await c.sendMessage({ alias, messageText: text });
-  return { sentAt: new Date().toISOString(), ...(afterFingerprint !== undefined ? { afterFingerprint } : {}) };
+  return prepareSend(client(apiKey), mindId, alias, text);
 }
 
 /**
  * Free — one history read, checked with the library's own reply-detection
  * (`isReplyHistoryRow`: correct sender-type handling, alias match,
- * fingerprint ordering, dedup against the sent text), the same logic
- * `waitForReply` uses internally. Callers poll this on an interval instead
- * of blocking one request on `sendAndVerify`.
+ * fingerprint ordering, dedup against the sent text) plus an independent
+ * `sentAfter` timestamp floor (see prepareSend's comment for why that
+ * floor exists rather than relying on the fingerprint alone). Callers poll
+ * this on an interval instead of blocking one request on `sendAndVerify`.
  */
 export async function findReply(
   apiKey: string,
   alias: string,
-  ctx: { sentMessageText?: string; afterFingerprint?: string },
+  ctx: { sentMessageText?: string; afterFingerprint?: string; sentAfter?: string },
 ): Promise<{ text: string; html: string; createdAt: string } | null> {
-  const history = await client(apiKey).getHistory(alias, { limit: 50 });
-  const reply = (history as MessageRecord[])
-    .filter((row) => isReplyHistoryRow(row, { alias, ...ctx }))
-    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""))[0];
+  const history = await getHistory(apiKey, alias, { limit: 50 });
+  const candidates = history.filter((row) => {
+    if (
+      !isReplyHistoryRow(row as unknown as MessageRecord, {
+        alias,
+        sentMessageText: ctx.sentMessageText,
+        afterFingerprint: ctx.afterFingerprint,
+      })
+    ) {
+      return false;
+    }
+    if (ctx.sentAfter && row.createdAt && row.createdAt <= ctx.sentAfter) return false;
+    return true;
+  });
+
+  // Latest first — not the first match after an ascending sort, which
+  // picked the OLDEST qualifying row and could return a stale prior reply
+  // on a conversation with more than one exchange in its window.
+  const reply = candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (!reply) return null;
-  return {
-    text: plainText(reply.messageText ?? ""),
-    html: reply.messageText ?? "",
-    createdAt: reply.createdAt ?? new Date().toISOString(),
-  };
+  return { text: plainText(reply.messageText), html: reply.messageText, createdAt: reply.createdAt };
 }
 
 /**
  * Send a message and confirm delivery via the library's own waitForReply —
  * see this file's top comment for why that replaces the old CLI shell-out
- * and hand-rolled history poll. `getLatestHistoryFingerprint` first mirrors
- * exactly what the CLI's own `send` command does (see its dist/cli.js
- * registerSend): capture the high-water mark before sending, so
- * waitForReply only matches messages strictly after it, never an old reply
- * already sitting in the thread.
+ * and hand-rolled history poll.
+ *
+ * The only remaining caller of this synchronous, blocking form is
+ * cli-push.ts — a local script with no serverless time limit, so its
+ * default timeout is generous (3 minutes, comfortably past the 76-111s
+ * measured live). Anything running inside a Vercel function (the web
+ * setup wizard's push, and /api/live-answer/refresh) uses sendOnly +
+ * findReply instead, precisely because no fixed timeout here is safe
+ * under a 60s function ceiling.
  */
 export async function sendAndVerify(
   apiKey: string,
@@ -201,24 +289,10 @@ export async function sendAndVerify(
   text: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<{ text: string; html: string; createdAt: string }> {
-  // Measured live on 18 Aug: a real reply took 111s. 50s leaves headroom
-  // under Vercel's 60s function ceiling (vercel.json's maxDuration) while
-  // staying as generous as that ceiling allows — a reply slower than this
-  // is a real, occasional case, not this function's bug; the caller's error
-  // message says to check `minds history` by hand for exactly that reason.
-  const timeoutMs = opts.timeoutMs ?? 50_000;
+  const timeoutMs = opts.timeoutMs ?? 180_000;
   const c = client(apiKey);
 
-  await c.ensureConversation(alias, mindId);
-
-  let afterFingerprint: string | undefined;
-  try {
-    afterFingerprint = await c.getLatestHistoryFingerprint(alias);
-  } catch {
-    // No prior history is fine — afterFingerprint just stays undefined.
-  }
-
-  await c.sendMessage({ alias, messageText: text });
+  const { afterFingerprint } = await prepareSend(c, mindId, alias, text);
 
   const outcome = await c.waitForReply({
     alias,

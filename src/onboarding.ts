@@ -34,7 +34,13 @@ import {
   type Briefing,
   type Watchlist,
 } from "./registry.ts";
-import { freshAlias, sendOnly, findReply, pushInstruction } from "./minds-client.ts";
+import {
+  freshAlias,
+  sendOnly,
+  findReply,
+  pushInstruction,
+  getCognitionBalance,
+} from "./minds-client.ts";
 
 export class OnboardingError extends Error {}
 
@@ -129,35 +135,39 @@ export type BackfillStats = {
 };
 
 /**
- * Bounded on purpose: this runs inside one HTTP request (a Vercel function
- * has a hard wall-clock limit), so it pulls a recent window rather than a
- * channel's full history. `npm run setup` / `npm run discord` remain the
+ * Bounded two ways, both needed: `maxPages` caps the request count, and
+ * `deadlineMs` caps actual wall-clock time — a Vercel function has a hard
+ * time limit (maxDuration in vercel.json), and Discord's own 429 retry
+ * backoff inside each page fetch means a small page count can still run
+ * long under rate-limiting. `npm run setup` / `npm run discord` remain the
  * path for a deep, full-history backfill run locally with no time limit.
  */
 export async function backfillCommunity(
   token: string,
   channelId: string,
   communityName: string,
-  opts: { sinceDays?: number; maxPages?: number } = {},
+  opts: { sinceDays?: number; maxPages?: number; deadlineMs?: number } = {},
 ): Promise<{ community: Community; stats: BackfillStats }> {
   const sinceDays = opts.sinceDays ?? 14;
   const maxPages = opts.maxPages ?? 30; // 30 pages * 100 = up to 3,000 messages
+  // Leaves headroom under vercel.json's 60s maxDuration for the registry
+  // build (CPU-bound, runs synchronously right after this) and response
+  // serialization that follow in the same request.
+  const deadlineMs = opts.deadlineMs ?? 40_000;
   const stopBefore = new Date(Date.now() - sinceDays * 86_400_000);
 
   const messages: StoredMessage[] = [];
   const events: StoredEvent[] = [];
 
-  let capped = false;
-  const { pages, oldest } = await walkHistory(
+  const { pages, oldest, deadlineHit } = await walkHistory(
     token,
     channelId,
     async (m, e) => {
       messages.push(...m);
       events.push(...e);
     },
-    { stopBefore, maxPages },
+    { stopBefore, maxPages, deadlineMs },
   );
-  if (pages >= maxPages) capped = true;
 
   const community = storedToCommunity(communityName, messages, events);
 
@@ -168,7 +178,9 @@ export async function backfillCommunity(
       messagesSeen: messages.length,
       oldest: oldest?.toISOString().slice(0, 10),
       windowDays: sinceDays,
-      capped,
+      // Either bound tripping means the backfill is a partial window, not
+      // the full range requested — worth telling the caller either way.
+      capped: pages >= maxPages || Boolean(deadlineHit),
     },
   };
 }
@@ -219,13 +231,30 @@ export async function startPush(
   apiKey: string,
   mindId: string,
   registry: Registry,
-): Promise<{ alias: string; sentAt: string; afterFingerprint?: string; sentMessageText: string }> {
+): Promise<{
+  alias: string;
+  sentAt: string;
+  afterFingerprint?: string;
+  sentMessageText: string;
+  before: number | null;
+}> {
   const registryJson = JSON.stringify(registry);
   const alias = freshAlias("kith-onboard");
   const text = pushInstruction(registryJson);
+  // Best-effort, and captured before the send: this is display/log
+  // bookkeeping only (mirrors cli-push.ts and /api/live-answer/refresh, the
+  // two existing paid call sites — see their own comments on why a balance
+  // read failing here must never be treated as fatal to the actual send).
+  const before = await getCognitionBalance(apiKey, mindId).then((b) => b.cognition).catch(() => null);
   try {
     const { sentAt, afterFingerprint } = await sendOnly(apiKey, mindId, alias, text);
-    return { alias, sentAt, ...(afterFingerprint !== undefined ? { afterFingerprint } : {}), sentMessageText: text };
+    return {
+      alias,
+      sentAt,
+      ...(afterFingerprint !== undefined ? { afterFingerprint } : {}),
+      sentMessageText: text,
+      before,
+    };
   } catch (err) {
     throw new OnboardingError((err as Error).message);
   }
@@ -235,7 +264,7 @@ export async function startPush(
 export async function checkPush(
   apiKey: string,
   alias: string,
-  ctx: { sentMessageText: string; afterFingerprint?: string },
+  ctx: { sentMessageText: string; afterFingerprint?: string; sentAfter?: string },
 ): Promise<{ text: string; createdAt: string } | null> {
   try {
     const reply = await findReply(apiKey, alias, ctx);

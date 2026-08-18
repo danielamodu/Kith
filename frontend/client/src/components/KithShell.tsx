@@ -1,5 +1,5 @@
 /* Kith Soft Spatial Studio: shared shell with tactile confirmation, warm pastels, and a calm spatial rail. */
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { ArrowUpRight, CircleHelp, Command, ExternalLink, Sparkles } from "lucide-react";
 import { toast } from "sonner";
@@ -78,6 +78,66 @@ export const api = {
     return data as T;
   },
 };
+
+/** Tracks whether the calling component is still mounted, for loops that outlive one render. */
+export function useMountedRef() {
+  const ref = useRef(true);
+  useEffect(() => {
+    ref.current = true;
+    return () => {
+      ref.current = false;
+    };
+  }, []);
+  return ref;
+}
+
+export class PollAbortedError extends Error {}
+export class PollTimeoutError extends Error {}
+
+/**
+ * Poll `check` on an interval until it reports `{ done: true }`.
+ *
+ * Two failure modes this exists to avoid, both real bugs found in an
+ * earlier version of this pattern (the setup wizard's push flow and Beat
+ * A's live-answer refresh both wait on a Mind reply that can take 76-111s,
+ * longer than any single request should be held open for):
+ *   1. Wrapping the whole multi-minute loop in one try/catch — a single
+ *      transient failure (one flaky network blip) would abort the entire
+ *      wait and report "failed" even though the underlying send succeeded
+ *      and the very next check would likely have found the reply. Fixed
+ *      here by isolating each attempt and only giving up after several
+ *      *consecutive* failures, not the first one.
+ *   2. No tie to component lifecycle — if the user navigates away mid-poll,
+ *      the loop kept firing requests and eventually called setState on an
+ *      unmounted component. Fixed by checking `isMounted` before every
+ *      sleep and every attempt, throwing PollAbortedError rather than
+ *      continuing (or setting state) once it returns false.
+ */
+export async function pollUntilDone<T extends { done: boolean }>(
+  check: () => Promise<T>,
+  opts: { intervalMs?: number; maxAttempts?: number; maxConsecutiveFailures?: number; isMounted?: () => boolean } = {},
+): Promise<T> {
+  const intervalMs = opts.intervalMs ?? 3000;
+  const maxAttempts = opts.maxAttempts ?? 40;
+  const maxConsecutiveFailures = opts.maxConsecutiveFailures ?? 3;
+  let consecutiveFailures = 0;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (opts.isMounted && !opts.isMounted()) {
+      throw new PollAbortedError("Stopped polling — the page navigated away.");
+    }
+    try {
+      const result = await check();
+      consecutiveFailures = 0;
+      if (result.done) return result;
+    } catch (err) {
+      consecutiveFailures++;
+      if (consecutiveFailures >= maxConsecutiveFailures) throw err;
+    }
+  }
+  throw new PollTimeoutError(`Still not done after ${maxAttempts} checks.`);
+}
 
 export function useBudget() {
   const fallback = { liveCallCount: 0, totalSpent: 0, entries: [] as unknown[] };

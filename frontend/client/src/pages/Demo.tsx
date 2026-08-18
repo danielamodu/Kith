@@ -2,11 +2,28 @@
 import { useEffect, useMemo, useState } from "react";
 import { Activity, ChevronDown, ChevronUp, Clock3, Database, ExternalLink, RefreshCw, ShieldCheck, Sparkles, UsersRound, Zap } from "lucide-react";
 import { toast } from "sonner";
-import { api, Briefing, EmptyState, PageShell, PresencePulse, SectionLabel, SignalTag, Surface, TactileButton, WatchItem } from "@/components/KithShell";
+import {
+  api,
+  Briefing,
+  EmptyState,
+  PageShell,
+  PresencePulse,
+  SectionLabel,
+  SignalTag,
+  Surface,
+  TactileButton,
+  WatchItem,
+  pollUntilDone,
+  useMountedRef,
+  PollAbortedError,
+  PollTimeoutError,
+} from "@/components/KithShell";
 
 type Baseline = { question?: string; answer?: string; source?: string; note?: string };
 type PronounIssue = { member: string; pronounUsed: string; context: string };
 type LiveAnswer = { answer?: string; text?: string; capturedAt?: string; source?: string; pronounIssues?: PronounIssue[] };
+type LiveStart = { alias: string; sentAt: string; afterFingerprint?: string; sentMessageText: string; before: number | null };
+type LiveStatus = { done: boolean; answer?: string; capturedAt?: string; pronounIssues?: PronounIssue[] };
 
 const fallbackWatch = { watching: [{ member: "Maya", headline: "Her Tuesday rhythm has gone quiet.", signals: ["gap drift", "contribution"], lastSeen: "active 2 days ago" }, { member: "Jonah", headline: "A newcomer got a hello, then no thread back.", signals: ["newcomer", "follow-up"], lastSeen: "active yesterday" }] as WatchItem[], quiet: false };
 const fallbackBaseline: Baseline = { question: "Who in the community might need a little attention right now?", answer: "It may help to check in with members who have been less active recently.", source: "Same model. Memory disabled.", note: "A true answer, but one without a personal baseline." };
@@ -21,7 +38,9 @@ export default function Demo() {
   const [receipts, setReceipts] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [waiting, setWaiting] = useState(false);
   const [usingFallback, setUsingFallback] = useState(true);
+  const mountedRef = useMountedRef();
 
   useEffect(() => {
     let active = true;
@@ -47,18 +66,48 @@ export default function Demo() {
   const evidence = briefing.cases?.[0]?.evidence || [];
   const watchCount = watch.watching?.length || 0;
 
+  // The send is quick; a real reply has measured 76-111s live — longer than
+  // any single request should be held open for (see minds-client.ts's
+  // sendAndVerify comment). Kicked off here, then polled via pollUntilDone
+  // rather than blocked on in one call.
   async function askLive() {
     setConfirmOpen(false);
     setLoading(true);
     toast("Kith is taking one deliberate look…");
+    let start: LiveStart;
     try {
-      const next = await api.postOrThrow<LiveAnswer>("/api/live-answer/refresh", { confirm: true });
-      setLive(next);
-      toast("The Mind has a fresh read.");
+      start = await api.postOrThrow<LiveStart>("/api/live-answer/refresh", { confirm: true });
     } catch (err) {
       toast(`Live read failed: ${err instanceof Error ? err.message : "unknown error"}`);
-    } finally {
       setLoading(false);
+      return;
+    }
+    setLoading(false);
+    setWaiting(true);
+    toast("Sent — this can take a minute or two while Kith actually reads it.");
+    try {
+      const status = await pollUntilDone<LiveStatus>(
+        () =>
+          api.postOrThrow<LiveStatus>("/api/live-answer/status", {
+            alias: start.alias,
+            sentMessageText: start.sentMessageText,
+            afterFingerprint: start.afterFingerprint,
+            sentAfter: start.sentAt,
+            before: start.before,
+          }),
+        { isMounted: () => mountedRef.current },
+      );
+      setLive({ answer: status.answer, capturedAt: status.capturedAt, pronounIssues: status.pronounIssues });
+      toast("The Mind has a fresh read.");
+    } catch (err) {
+      if (err instanceof PollAbortedError) return;
+      const message =
+        err instanceof PollTimeoutError
+          ? "Still no reply after 2 minutes — the send itself likely succeeded; this is slow, not failed. Try refreshing the page in a moment."
+          : `Live read failed: ${err instanceof Error ? err.message : "unknown error"}`;
+      toast(message);
+    } finally {
+      if (mountedRef.current) setWaiting(false);
     }
   }
 
@@ -68,7 +117,7 @@ export default function Demo() {
 
       <section className="dashboard-grid">
         <Surface className="watchlist-panel" accent="mint"><div className="panel-heading"><div><span className="panel-kicker"><UsersRound size={14} /> watchlist</span><h2>People to hold lightly.</h2></div><span className="count-bubble">{watchCount}</span></div>{watchCount ? <div className="watch-list">{watch.watching.map((item, index) => <WatchCard key={`${item.member || item.name}-${index}`} item={item} index={index} />)}</div> : <EmptyState />}</Surface>
-        <div className="comparison-zone"><div className="comparison-heading"><div><span className="panel-kicker"><Sparkles size={14} /> comparison</span><h2>Same question. Different memory.</h2></div><span className="comparison-caption">Beat A</span></div><div className="answer-grid"><AnswerCard kind="baseline" source={baseline.source || "Same model. Memory disabled."} answer={baseline.answer || "No answer captured yet."} foot={baseline.note || "A useful start, without continuity."} /><div className="answer-bridge"><span>vs.</span></div><AnswerCard kind="kith" source={live.source || "Kith — reading the community it remembers."} answer={unsafe ? "This cached answer needs a gentle pause before it goes on camera." : liveText || "No cached answer yet."} foot={unsafe ? "Pronoun safety guard engaged." : live.capturedAt ? `captured ${live.capturedAt}` : "cached, not a new spend"} unsafe={unsafe} pronounIssues={pronounIssues} /></div><div className="comparison-actions"><button className="receipts-toggle" onClick={() => setReceipts((value) => !value)}>{receipts ? <ChevronUp size={16} /> : <ChevronDown size={16} />} {receipts ? "Hide receipts" : `Open receipts · ${evidence.length || 3}`}</button><TactileButton variant="primary" onClick={() => setConfirmOpen(true)} disabled={loading}><Zap size={15} /> {loading ? "Kith is looking…" : "Ask Kith live"}</TactileButton></div>{receipts && <div className="receipts-panel">{evidence.length ? evidence.map((item, index) => <div className="receipt-row" key={`${item.timestamp}-${index}`}><span className="receipt-time"><Clock3 size={13} /> {item.timestamp || "recently"}</span><p>{item.text || item.detail}</p><span className="receipt-source">{item.source || "memory"}</span></div>) : <p className="muted-copy">The Mind has not left receipts for this read yet.</p>}</div>}</div>
+        <div className="comparison-zone"><div className="comparison-heading"><div><span className="panel-kicker"><Sparkles size={14} /> comparison</span><h2>Same question. Different memory.</h2></div><span className="comparison-caption">Beat A</span></div><div className="answer-grid"><AnswerCard kind="baseline" source={baseline.source || "Same model. Memory disabled."} answer={baseline.answer || "No answer captured yet."} foot={baseline.note || "A useful start, without continuity."} /><div className="answer-bridge"><span>vs.</span></div><AnswerCard kind="kith" source={live.source || "Kith — reading the community it remembers."} answer={unsafe ? "This cached answer needs a gentle pause before it goes on camera." : liveText || "No cached answer yet."} foot={unsafe ? "Pronoun safety guard engaged." : live.capturedAt ? `captured ${live.capturedAt}` : "cached, not a new spend"} unsafe={unsafe} pronounIssues={pronounIssues} /></div><div className="comparison-actions"><button className="receipts-toggle" onClick={() => setReceipts((value) => !value)}>{receipts ? <ChevronUp size={16} /> : <ChevronDown size={16} />} {receipts ? "Hide receipts" : `Open receipts · ${evidence.length || 3}`}</button><TactileButton variant="primary" onClick={() => setConfirmOpen(true)} disabled={loading || waiting}><Zap size={15} /> {waiting ? "Kith is thinking…" : loading ? "Sending…" : "Ask Kith live"}</TactileButton></div>{receipts && <div className="receipts-panel">{evidence.length ? evidence.map((item, index) => <div className="receipt-row" key={`${item.timestamp}-${index}`}><span className="receipt-time"><Clock3 size={13} /> {item.timestamp || "recently"}</span><p>{item.text || item.detail}</p><span className="receipt-source">{item.source || "memory"}</span></div>) : <p className="muted-copy">The Mind has not left receipts for this read yet.</p>}</div>}</div>
       </section>
 
       <section className="demo-note-grid"><Surface className="demo-note demo-note--soft"><ShieldCheck size={22} /><div><h3>Careful by design</h3><p>Every live read is user-initiated, confirmed, and visible in the budget strip above. No auto-refresh. No hidden spend.</p></div></Surface><Surface className="demo-note demo-note--violet"><Database size={22} /><div><h3>Memory is personal</h3><p>Kith compares a person with their own pattern. The same silence can mean different things to different people.</p></div></Surface></section>

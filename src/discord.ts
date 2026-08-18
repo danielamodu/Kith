@@ -174,14 +174,27 @@ export async function walkHistory(
   token: string,
   channelId: string,
   onPage: (messages: StoredMessage[], events: StoredEvent[]) => Promise<void>,
-  opts: { maxPages?: number; stopBefore?: Date } = {},
-): Promise<{ pages: number; oldest?: Date }> {
+  opts: { maxPages?: number; stopBefore?: Date; deadlineMs?: number } = {},
+): Promise<{ pages: number; oldest?: Date; deadlineHit?: boolean }> {
   let before: string | undefined;
   let pages = 0;
   let oldest: Date | undefined;
   const maxPages = opts.maxPages ?? 10_000;
+  // maxPages alone doesn't bound wall-clock time: fetchPage's own 429 retry
+  // backoff (up to 8 retries per page, each waiting Discord's retry_after)
+  // can push total duration well past a caller's actual time budget even
+  // at a small page count. A caller running inside a Vercel function
+  // (deadlineMs set) needs this to stop and return whatever was gathered
+  // rather than being killed mid-request by the platform.
+  const deadline = opts.deadlineMs !== undefined ? Date.now() + opts.deadlineMs : undefined;
+  let deadlineHit = false;
 
   while (pages < maxPages) {
+    if (deadline !== undefined && Date.now() >= deadline) {
+      deadlineHit = true;
+      break;
+    }
+
     const page = await fetchPage(token, channelId, { before, limit: 100 });
     if (page.length === 0) break;
 
@@ -202,5 +215,5 @@ export async function walkHistory(
     if (page.length < 100) break; // reached the start of the channel
   }
 
-  return { pages, oldest };
+  return { pages, oldest, deadlineHit };
 }

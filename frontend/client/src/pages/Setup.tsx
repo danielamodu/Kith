@@ -16,7 +16,18 @@ import {
   Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api, PageShell, SectionLabel, Surface, TactileButton, assetUrls } from "@/components/KithShell";
+import {
+  api,
+  PageShell,
+  SectionLabel,
+  Surface,
+  TactileButton,
+  assetUrls,
+  pollUntilDone,
+  useMountedRef,
+  PollAbortedError,
+  PollTimeoutError,
+} from "@/components/KithShell";
 
 type DiscordChannel = { id: string; name: string };
 type ChannelCheck = { ok: boolean; sampled: number; withContent: number };
@@ -27,8 +38,8 @@ type BuildResult = {
   tokens: { registry: number; briefing: number; watchlist: number };
   stats: { pages: number; messagesSeen: number; windowDays: number; capped: boolean; oldest?: string };
 };
-type PushStart = { alias: string; sentAt: string; afterFingerprint?: string; sentMessageText: string };
-type PushStatus = { done: boolean; text?: string; createdAt?: string };
+type PushStart = { alias: string; sentAt: string; afterFingerprint?: string; sentMessageText: string; before: number | null };
+type PushStatus = { done: boolean; text?: string; createdAt?: string; spent?: number | null };
 
 export default function Setup() {
   // step 1 — discord token
@@ -62,6 +73,12 @@ export default function Setup() {
   const [pushWaiting, setPushWaiting] = useState(false);
   const [pushResult, setPushResult] = useState<{ text: string; createdAt: string } | null>(null);
   const [pushError, setPushError] = useState<string | null>(null);
+  const [pushSpent, setPushSpent] = useState<number | null>(null);
+  // Kept so a failed *poll* (send already went through) can be resumed
+  // with "Check again" instead of the user hitting "push" a second time
+  // and creating an entirely separate conversation on their Mind.
+  const [pushStart, setPushStart] = useState<PushStart | null>(null);
+  const mountedRef = useMountedRef();
 
   const step2Open = Boolean(botUsername);
   const step3Open = Boolean(channelCheck?.ok);
@@ -141,8 +158,47 @@ export default function Setup() {
     }
   }
 
-  function sleep(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  // Shared by a fresh push and a "check again" recovery after a poll
+  // failure — resumes against the SAME alias/start rather than starting a
+  // new one, so a flaky poll can't turn into a second real conversation
+  // and a second real charge on the user's Mind.
+  async function waitForPush(start: PushStart) {
+    setPushWaiting(true);
+    try {
+      const status = await pollUntilDone<PushStatus>(
+        () =>
+          api.postOrThrow<PushStatus>("/api/setup/push/status", {
+            apiKey,
+            mindId,
+            alias: start.alias,
+            sentMessageText: start.sentMessageText,
+            afterFingerprint: start.afterFingerprint,
+            sentAfter: start.sentAt,
+            before: start.before,
+          }),
+        { isMounted: () => mountedRef.current },
+      );
+      setPushResult({ text: status.text ?? "", createdAt: status.createdAt ?? "" });
+      setPushSpent(status.spent ?? null);
+      toast("Stored. Your Mind now holds this as a durable Artifact.");
+      setPushStart(null);
+    } catch (err) {
+      if (err instanceof PollAbortedError) return; // navigated away — nothing to show
+      if (err instanceof PollTimeoutError) {
+        setPushError(
+          "No reply yet after 2 minutes of checking. The send itself succeeded — this is slow, not failed. " +
+            "Hit \"Check again\" below, check `minds history` on your Mind, or copy the registry JSON above and push it with `npm run push`.",
+        );
+      } else {
+        setPushError(
+          err instanceof Error
+            ? err.message
+            : "Checking the reply failed. Hit \"Check again\" — the send itself likely still succeeded.",
+        );
+      }
+    } finally {
+      if (mountedRef.current) setPushWaiting(false);
+    }
   }
 
   async function push() {
@@ -151,6 +207,8 @@ export default function Setup() {
     setPushing(true);
     setPushError(null);
     setPushResult(null);
+    setPushSpent(null);
+    setPushStart(null);
     try {
       const start = await api.postOrThrow<PushStart>("/api/setup/push", {
         apiKey,
@@ -159,47 +217,27 @@ export default function Setup() {
         confirm: true,
       });
       toast("Sent. This can take a minute or two — Kith is actually reading it.");
+      setPushStart(start);
       setPushing(false);
-      setPushWaiting(true);
-
-      // The send is quick; a real reply is not — measured 76-111s live.
-      // Poll rather than block one request past what a server can hold
-      // open. Up to ~40 tries at 3s apart, about 2 minutes.
-      for (let attempt = 0; attempt < 40; attempt++) {
-        await sleep(3000);
-        const status = await api.postOrThrow<PushStatus>("/api/setup/push/status", {
-          apiKey,
-          alias: start.alias,
-          sentMessageText: start.sentMessageText,
-          afterFingerprint: start.afterFingerprint,
-        });
-        if (status.done) {
-          setPushResult({ text: status.text ?? "", createdAt: status.createdAt ?? "" });
-          toast("Stored. Your Mind now holds this as a durable Artifact.");
-          setPushWaiting(false);
-          return;
-        }
-      }
-      setPushError(
-        "No reply yet after 2 minutes of checking. The send itself succeeded — this is slow, not failed. " +
-          "Check `minds history` on your Mind, or copy the registry JSON below and push it with `npm run push`.",
-      );
+      await waitForPush(start);
     } catch (err) {
       setPushError(
         err instanceof Error
           ? err.message
-          : "Push failed. Copy the registry JSON below and push it yourself with `npm run push`.",
+          : "Push failed. Copy the registry JSON above and push it yourself with `npm run push`.",
       );
-    } finally {
       setPushing(false);
-      setPushWaiting(false);
     }
   }
 
-  function copyRegistry() {
+  async function copyRegistry() {
     if (!buildResult) return;
-    navigator.clipboard.writeText(JSON.stringify(buildResult.registry, null, 2));
-    toast("Registry JSON copied.");
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(buildResult.registry, null, 2));
+      toast("Registry JSON copied.");
+    } catch {
+      toast("Couldn't copy — your browser blocked the clipboard write. Try Download instead.");
+    }
   }
 
   function downloadRegistry() {
@@ -209,8 +247,13 @@ export default function Setup() {
     const a = document.createElement("a");
     a.href = url;
     a.download = "kith-registry.json";
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    // Deferred, not called synchronously right after click(): some browsers
+    // schedule the actual download read asynchronously, and revoking the
+    // object URL immediately can race it into an empty/broken file.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   return (
@@ -413,7 +456,11 @@ export default function Setup() {
                 </div>
                 <div className="wizard-actions">
                   {!confirmPush ? (
-                    <TactileButton variant="primary" onClick={() => setConfirmPush(true)} disabled={!mindId || !apiKey || pushing || pushWaiting}>
+                    <TactileButton
+                      variant="primary"
+                      onClick={() => setConfirmPush(true)}
+                      disabled={!mindId || !apiKey || pushing || pushWaiting || Boolean(pushStart && pushError)}
+                    >
                       <Send size={15} /> Push to my Mind
                     </TactileButton>
                   ) : (
@@ -426,6 +473,12 @@ export default function Setup() {
                     </>
                   )}
                 </div>
+                {pushStart && pushError && (
+                  <p className="field-hint">
+                    A send is already in flight for this Mind — use "Check again" below instead of starting a new
+                    push, so you don't end up with two conversations charged for the same registry.
+                  </p>
+                )}
                 {pushWaiting && (
                   <div className="step-result step-result--warn">
                     <Loader2 size={16} className="spin" /> Sent — Kith is reading and storing it now. This has taken
@@ -435,16 +488,26 @@ export default function Setup() {
                 {pushResult && (
                   <div className="step-result step-result--ok">
                     <CheckCircle2 size={16} />
-                    <span>Stored. Your Mind replied: <em>&ldquo;{pushResult.text.slice(0, 220)}{pushResult.text.length > 220 ? "…" : ""}&rdquo;</em></span>
+                    <span>
+                      Stored{pushSpent !== null ? ` — ${pushSpent.toFixed(1)} cognition spent` : ""}. Your Mind
+                      replied: <em>&ldquo;{pushResult.text.slice(0, 220)}{pushResult.text.length > 220 ? "…" : ""}&rdquo;</em>
+                    </span>
                   </div>
                 )}
                 {pushError && (
                   <div className="step-result step-result--error">
                     <AlertTriangle size={16} />
                     <span>
-                      {pushError} Your registry is already built — use Copy or Download above and push it yourself
-                      with <code>npm run push</code>.
+                      {pushError}{" "}
+                      {!pushStart && (
+                        <>Your registry is already built — use Copy or Download above and push it yourself with{" "}<code>npm run push</code>.</>
+                      )}
                     </span>
+                    {pushStart && (
+                      <button className="text-button" onClick={() => { setPushError(null); waitForPush(pushStart); }} disabled={pushWaiting}>
+                        Check again
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

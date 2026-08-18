@@ -54,6 +54,23 @@ test("transformFeedMessages marks a Kith message unprompted only with no human t
   assert.equal(out[3]!.unprompted, false, "a human turn happened since restart, so this reply isn't unprompted");
 });
 
+test("transformFeedMessages treats senderType 2 as Kith too, not just 0", () => {
+  // Real bug this guards: the library's own looksLikeMindReply treats both
+  // 0 and 2 as Mind-sender encodings (see minds-client.ts's HistoryMessage
+  // comment). A narrower `=== 0`-only check misclassifies a senderType:2
+  // reply as human, which both mislabels it in the feed and — more
+  // seriously — makes it wrongly count as "a human turn", suppressing a
+  // later genuine unprompted Kith message from ever being flagged.
+  const restartAt = "2026-08-18T00:00:00.000Z";
+  const messages: HistoryMessage[] = [
+    { id: "1", fingerprint: "f1", conversationId: "c", messageId: "m1", senderId: "kith", senderType: 2, senderEmail: "k@e", recipientId: "human", recipientEmail: "s@e", messageText: "<p>reply</p>", attachments: [], status: "sent", createdAt: "2026-08-18T00:05:00.000Z" },
+  ];
+  const out = transformFeedMessages(messages, restartAt);
+  assert.equal(out[0]!.isKith, true, "senderType 2 must be recognised as Kith");
+  assert.equal(out[0]!.author, "Kith");
+  assert.equal(out[0]!.unprompted, true, "an unanswered senderType:2 Kith message after restart is unprompted");
+});
+
 // The registry always carries "(not stated)" unless a pronoun is explicitly
 // recorded — see docs/architecture.md. Both members below are on that
 // default, so any gendered pronoun near their name is a real violation.

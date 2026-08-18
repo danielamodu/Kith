@@ -55,7 +55,12 @@ export function transformFeedMessages(
   const restart = restartAt ? new Date(restartAt) : null;
   let sawHumanSinceRestart = false;
   return sorted.map((m) => {
-    const isKith = m.senderType === 0;
+    // Both 0 and 2 are Mind-sender encodings — matches the library's own
+    // looksLikeMindReply, and minds-client.ts's HistoryMessage doc comment.
+    // A narrower `=== 0`-only check here would misclassify a real Kith
+    // reply as human, which breaks the exact "no human turn since restart"
+    // logic this function exists for.
+    const isKith = m.senderType === 0 || m.senderType === 2;
     const ts = new Date(m.createdAt);
     const afterRestart = restart !== null && ts > restart;
     if (!isKith && afterRestart) sawHumanSinceRestart = true;
