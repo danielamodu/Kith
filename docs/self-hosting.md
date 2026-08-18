@@ -44,9 +44,29 @@ if curious why that mattered).
 npm install
 ```
 
-## Get your community's history in
+## The fast path
 
-Pick one:
+```bash
+npm run setup
+```
+
+Walks through Discord ingest (or hands you the Telegram steps, which can't be fully
+automated — the Bot API can't read history from before the bot joined), the registry build,
+and the push, in the right order, asking for what it needs along the way. Same underlying
+scripts as the manual steps below — nothing about the mechanism changes, it's just one
+command instead of remembering the order of four.
+
+One honest caveat: the individual steps (Discord check, backfill, registry build, and
+`cli-push.ts --yes`) are each separately verified working. The full interactive run —
+answering its prompts live, end to end — hasn't been, for a mundane reason: reliably
+scripting multiple sequential prompts through piped stdin turned out to be its own small
+rabbit hole, and burning real cognition to test the very last step live wasn't worth it
+against an already-tight balance. If something's off in how the prompts hand off to each
+other, the manual path below is the fallback — same commands, no wizard.
+
+## Get your community's history in, manually
+
+If you'd rather run each step yourself, or the wizard hits something odd — pick one:
 
 ```bash
 npm run discord -- --channels <guildId>    # list channels the bot can see

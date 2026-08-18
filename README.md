@@ -93,8 +93,9 @@ npm run web           # the dashboard, at http://localhost:3131
 npm test               # 29 tests
 ```
 
-For your own Discord or Telegram community instead of the synthetic fixture, see
-[`docs/self-hosting.md`](docs/self-hosting.md) — full setup, end to end.
+For your own Discord or Telegram community instead of the synthetic fixture, `npm run setup`
+walks through ingest, registry build, and push in one go — or see
+[`docs/self-hosting.md`](docs/self-hosting.md) for the full manual steps and honest notes.
 
 Deployable straight to Vercel: `vercel.json` handles the build and routing; set
 `MINDS_BUILDER_API_KEY` and `KITH_MIND_ID` as environment variables and it runs live.
