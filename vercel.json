@@ -2,7 +2,8 @@
   "buildCommand": "npm run fixture && npm run registry && npm run web:build",
   "functions": {
     "api/index.ts": {
-      "includeFiles": "{data,content,public}/**"
+      "includeFiles": "{data,content,public}/**",
+      "maxDuration": 60
     }
   },
   "rewrites": [

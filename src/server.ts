@@ -35,6 +35,16 @@ import {
   type WatchEntry,
 } from "./presentation.ts";
 import { createStore } from "./kv-store.ts";
+import {
+  verifyDiscordToken,
+  listChannels,
+  checkChannel,
+  backfillCommunity,
+  buildPayloads,
+  startPush,
+  checkPush,
+  OnboardingError,
+} from "./onboarding.ts";
 
 const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
@@ -328,6 +338,128 @@ app.get("/api/live-feed", async (_req, res) => {
           }
         : { error: message },
     );
+  }
+});
+
+// ── setup wizard: build a creator's own registry, in memory, per-request ───
+//
+// Every credential here (Discord bot token, Minds Builder API key) is read
+// from the request body and never persisted — used for the one call it's
+// needed for, then discarded when the request ends. Nothing about this flow
+// touches our own Mind, our own data files, or any other creator's request.
+
+function onboardingError(res: express.Response, err: unknown): void {
+  if (err instanceof OnboardingError) {
+    res.status(400).json({ error: err.message });
+  } else {
+    res.status(502).json({ error: (err as Error).message });
+  }
+}
+
+app.post("/api/setup/verify-discord", async (req, res) => {
+  const token = req.body?.token;
+  if (typeof token !== "string" || !token.trim()) {
+    res.status(400).json({ error: "Missing Discord bot token." });
+    return;
+  }
+  try {
+    res.json(await verifyDiscordToken(token.trim()));
+  } catch (err) {
+    onboardingError(res, err);
+  }
+});
+
+app.post("/api/setup/list-channels", async (req, res) => {
+  const { token, guildId } = req.body ?? {};
+  if (typeof token !== "string" || typeof guildId !== "string" || !guildId.trim()) {
+    res.status(400).json({ error: "Missing token or server (guild) id." });
+    return;
+  }
+  try {
+    const channels = await listChannels(token.trim(), guildId.trim());
+    res.json({ channels });
+  } catch (err) {
+    onboardingError(res, err);
+  }
+});
+
+app.post("/api/setup/check-channel", async (req, res) => {
+  const { token, channelId } = req.body ?? {};
+  if (typeof token !== "string" || typeof channelId !== "string" || !channelId.trim()) {
+    res.status(400).json({ error: "Missing token or channel id." });
+    return;
+  }
+  try {
+    res.json(await checkChannel(token.trim(), channelId.trim()));
+  } catch (err) {
+    onboardingError(res, err);
+  }
+});
+
+app.post("/api/setup/build", async (req, res) => {
+  const { token, channelId, communityName, sinceDays } = req.body ?? {};
+  if (typeof token !== "string" || typeof channelId !== "string" || !channelId.trim()) {
+    res.status(400).json({ error: "Missing token or channel id." });
+    return;
+  }
+  const days = Math.min(60, Math.max(1, Number(sinceDays) || 14));
+  try {
+    const { community, stats } = await backfillCommunity(
+      token.trim(),
+      channelId.trim(),
+      typeof communityName === "string" && communityName.trim() ? communityName.trim() : "your community",
+      { sinceDays: days },
+    );
+    const payloads = buildPayloads(community);
+    res.json({ ...payloads, stats });
+  } catch (err) {
+    onboardingError(res, err);
+  }
+});
+
+// The one cognition-spending step in this flow — gated behind an explicit
+// confirm, same pattern as /api/live-answer/refresh above. Split into a
+// fast kick-off (this route) and a separate free poll (below): the send
+// itself is quick, but a real reply has measured 76-111s live, past what
+// one function invocation can hold open — see startPush's own comment.
+app.post("/api/setup/push", async (req, res) => {
+  const { apiKey, mindId, registry, confirm } = req.body ?? {};
+  if (typeof apiKey !== "string" || !apiKey.trim() || typeof mindId !== "string" || !mindId.trim()) {
+    res.status(400).json({ error: "Missing Minds Builder API key or Mind id." });
+    return;
+  }
+  if (!registry || typeof registry !== "object") {
+    res.status(400).json({ error: "Missing registry — build it first." });
+    return;
+  }
+  if (confirm !== true) {
+    res.status(400).json({
+      error: "This spends real cognition on your Mind. Resend with { confirm: true } to proceed.",
+    });
+    return;
+  }
+  try {
+    res.json(await startPush(apiKey.trim(), mindId.trim(), registry));
+  } catch (err) {
+    onboardingError(res, err);
+  }
+});
+
+// Free — poll after /api/setup/push until { done: true }.
+app.post("/api/setup/push/status", async (req, res) => {
+  const { apiKey, alias, sentMessageText, afterFingerprint } = req.body ?? {};
+  if (typeof apiKey !== "string" || !apiKey.trim() || typeof alias !== "string" || !alias.trim()) {
+    res.status(400).json({ error: "Missing apiKey or alias." });
+    return;
+  }
+  try {
+    const reply = await checkPush(apiKey.trim(), alias.trim(), {
+      sentMessageText: typeof sentMessageText === "string" ? sentMessageText : "",
+      ...(typeof afterFingerprint === "string" ? { afterFingerprint } : {}),
+    });
+    res.json(reply ? { done: true, ...reply } : { done: false });
+  } catch (err) {
+    onboardingError(res, err);
   }
 });
 

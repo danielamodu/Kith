@@ -19,7 +19,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
-import { freshAlias, sendAndVerify, getCognitionBalance } from "./minds-client.ts";
+import { freshAlias, sendAndVerify, getCognitionBalance, pushInstruction } from "./minds-client.ts";
 
 const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
@@ -79,20 +79,9 @@ if (!process.argv.includes("--yes")) {
 
 const before = await getCognitionBalance(API_KEY, MIND_ID).catch(() => null);
 
-// This exact instruction shape — name the artifact, explain the field
-// meanings, tell it not to analyse yet — is the one already proven to work
-// across every registry push earlier in this project (see
-// docs/evidence/2026-08-16-vertical-slice.md and the architecture doc's
-// "verified behaviours" section). Kept close to that wording deliberately
-// rather than rewritten, since it's tested, not guessed.
-const instruction = `This is the Kith member registry for the community you steward. Please store it as a durable Artifact named 'kith-registry' so it survives across cognition cycles, overwriting any previous version, and tell me the artifact ID.
-
-Field meanings: rhythmH = median hours between that person's posts, their own personal baseline. spreadH = variability of that rhythm. quietForH = hours silent as of generatedAt (not "today" — always reason against generatedAt, never the wall clock). quietRatio = quietForH divided by rhythmH, i.e. how many of their own cycles they've missed. baselineReliable = false means too few messages for the rhythm to mean anything — treat those as "cannot tell," never guess. lenC = median message length. ans/ansNew/helped = contribution. pronouns is authoritative data — read it, never infer from a name. signals.unansweredNewcomers = newcomers whose first message sat unanswered.
-
-Do not analyse it now — just store it, and let your next cadence cycle (or a direct question) do the work.
-
-Registry:
-${registry}`;
+// Shared with onboarding.ts's web push route — see pushInstruction's own
+// comment in minds-client.ts for why this wording is kept in one place.
+const instruction = pushInstruction(registry);
 
 const alias = freshAlias("kith-push");
 console.log(`\nSending (conversation: ${alias})...`);

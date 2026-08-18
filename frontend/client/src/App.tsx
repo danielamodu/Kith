@@ -8,6 +8,7 @@ import Home from "./pages/Home";
 import Demo from "./pages/Demo";
 import Feed from "./pages/Feed";
 import HowItWorks from "./pages/HowItWorks";
+import Setup from "./pages/Setup";
 import LegalRouter from "./pages/LegalAndDocs";
 import NotFound from "./pages/NotFound";
 import { OnboardingModal } from "./components/OnboardingModal";
@@ -21,6 +22,7 @@ function Router() {
         <Route path="/demo" component={Demo} />
         <Route path="/demo/feed" component={Feed} />
         <Route path="/how-it-works" component={HowItWorks} />
+        <Route path="/setup" component={Setup} />
         <Route path="/docs" component={LegalRouter} />
         <Route path="/privacy" component={LegalRouter} />
         <Route path="/terms" component={LegalRouter} />

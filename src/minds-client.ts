@@ -1,59 +1,50 @@
 /**
- * Minds Builder API client — direct HTTP, not a shell-out to the `minds` CLI.
+ * Minds Builder API client — built on @animocabrands/minds-client-lib, the
+ * platform team's own published client, not a hand-rolled fetch layer.
  *
- * Every prior live interaction with Kith in this project went through the CLI
- * (`minds send`, `minds history`, ...). For a server route that has to run
- * reliably on Windows without depending on a global npm binary being on PATH,
- * direct fetch() is the safer transport — mirrors the pattern already used in
- * discord.ts. Confirmed working by hand on 17 Aug against the real API before
- * this file was written: base URL, auth header, and every shape below were
- * read from a live response, not guessed from documentation.
+ * History: this file used to hand-roll fetch() for reads (list/history/
+ * balance/ensureConversation — all confirmed free and reliable by hand on
+ * 17 Aug) but shelled out to the `minds` CLI via exec() for the one send
+ * step, because a direct POST to /v1/messaging/message had, in one earlier
+ * test, left a message stranded — Kith registered it but no reply ever
+ * appeared in history. That CLI dependency broke on Vercel (no global
+ * `minds` binary in a serverless function — it's not a bundled dependency,
+ * so exec() failed with ENOENT) and only became load-bearing once the web
+ * setup wizard needed to push onto a THIRD PARTY's Mind from that same
+ * serverless route, not just our own dev machine.
  *
- * Cost model, confirmed empirically (balance unchanged to 8 decimal places
- * across all of these): listing conversations, reading history, and creating
- * a conversation are all FREE. Only sending a message — which triggers a real
- * inference cycle — costs cognition. That is the one call this file gates.
+ * The fix: `minds` the CLI turns out to be a thin wrapper around this exact
+ * library (read its own dist/cli.js — `getClientOrThrow()` returns a
+ * `createMindsClient()` instance from `@animocabrands/minds-client-lib`).
+ * That library's `sendMessage` calls the identical `/v1/messaging/message`
+ * endpoint our old direct POST used — so the endpoint was never the
+ * problem. The real gap was verification: this library's `waitForReply`
+ * first tries an SSE stream (`GET /v1/messaging/events`) with a real
+ * reply-detection heuristic (`isReplyEvent`: correct sender-type check for
+ * both Mind-sender encodings, alias match, fingerprint ordering, dedup
+ * against the sent text) and falls back to polling history with the same
+ * check if the stream errors or times out. Our old polling loop only
+ * checked `senderType === 0`, which is a narrower and less careful check
+ * than what the platform's own client does. Using the library directly
+ * gets the correct verification logic AND drops exec()/cmd.exe/ENOENT
+ * entirely — pure fetch(), portable to Vercel or anywhere else Node runs.
  */
+import {
+  createMindsClient,
+  isReplyHistoryRow,
+  type MessageRecord,
+} from "@animocabrands/minds-client-lib";
 
-const API = "https://api.build.hellominds.ai";
-
-async function call<T>(
-  apiKey: string,
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      "X-Api-Key": apiKey,
-      "content-type": "application/json",
-      ...init.headers,
-    },
-    signal: init.signal ?? AbortSignal.timeout(30_000),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Minds ${path} failed (${res.status}): ${text.slice(0, 300)}`);
-  }
-  // Some endpoints (e.g. conversation create) return a small body; all are JSON.
-  return (await res.json()) as T;
+function client(apiKey: string) {
+  return createMindsClient({ builderApiKey: apiKey });
 }
 
-// ── shapes, read from live responses on 17 Aug ────────────────────────────────
+// ── shapes ───────────────────────────────────────────────────────────────────
 
 export type Conversation = {
-  alias: string;
+  alias?: string | null;
   conversationId: string;
-  subject?: string;
-  createdAt?: string;
-  lastMessageAt?: string | null;
-  participants?: Array<{
-    partyId: string;
-    partyType: number;
-    name: string;
-    email: string;
-  }>;
+  [key: string]: unknown;
 };
 
 export type HistoryMessage = {
@@ -77,49 +68,27 @@ export type HistoryMessage = {
 // ── free operations ─────────────────────────────────────────────────────────
 
 export function listConversations(apiKey: string): Promise<Conversation[]> {
-  return call<Conversation[]>(apiKey, "/v1/messaging/conversations");
+  return client(apiKey).listConversations();
 }
 
-export function getHistory(
-  apiKey: string,
-  alias: string,
-): Promise<HistoryMessage[]> {
-  return call<HistoryMessage[]>(
-    apiKey,
-    `/v1/messaging/histories/${encodeURIComponent(alias)}`,
-  );
+export function getHistory(apiKey: string, alias: string): Promise<HistoryMessage[]> {
+  return client(apiKey).getHistory(alias) as Promise<HistoryMessage[]>;
 }
 
-export function ensureConversation(
+export async function ensureConversation(
   apiKey: string,
   mindId: string,
   alias: string,
 ): Promise<{ conversationId: string; alias: string }> {
-  return call(apiKey, "/v1/messaging/conversation", {
-    method: "POST",
-    body: JSON.stringify({ mindId, alias }),
-  });
+  const c = await client(apiKey).ensureConversation(alias, mindId);
+  return { conversationId: c.conversationId, alias: c.alias ?? alias };
 }
 
-/**
- * Confirmed empirically on 17 Aug — this does NOT match the CLI's own
- * `{ ok, balance: { mindId, cognition } }` display shape at all. The raw
- * endpoint returns a flat object, and the balance field is called `swarm`,
- * not `cognition` — the CLI evidently relabels it for humans. The initial
- * guess (mirroring the CLI's display shape) crashed on `.balance` being
- * undefined, and because that crash happened *after* a real paid send had
- * already gone through, it cost real cognition for a discarded answer. Every
- * caller of this function now treats a failure here as non-fatal to the
- * overall flow for exactly that reason.
- */
 export function getCognitionBalance(
   apiKey: string,
   mindId: string,
 ): Promise<{ mindId: string; cognition: number }> {
-  return call<{ mindId: string; swarm: number }>(
-    apiKey,
-    `/v1/minds/${mindId}/credits`,
-  ).then((r) => ({ mindId: r.mindId, cognition: r.swarm }));
+  return client(apiKey).getCognitionBalance(mindId);
 }
 
 /** Strip the Mind's reply HTML down to readable text for the UI. */
@@ -142,130 +111,134 @@ export function freshAlias(prefix: string): string {
   return `${prefix}-${Date.now()}`;
 }
 
+/**
+ * The exact instruction shape proven to work across every registry push in
+ * this project (see docs/evidence/2026-08-16-vertical-slice.md and the
+ * architecture doc's "verified behaviours" section). Shared by cli-push.ts
+ * (our own Mind) and onboarding.ts (a creator's own Mind, from the web setup
+ * wizard) so both send the identical, tested wording rather than two copies
+ * drifting apart.
+ */
+export function pushInstruction(registryJson: string): string {
+  return `This is the Kith member registry for the community you steward. Please store it as a durable Artifact named 'kith-registry' so it survives across cognition cycles, overwriting any previous version, and tell me the artifact ID.
+
+Field meanings: rhythmH = median hours between that person's posts, their own personal baseline. spreadH = variability of that rhythm. quietForH = hours silent as of generatedAt (not "today" — always reason against generatedAt, never the wall clock). quietRatio = quietForH divided by rhythmH, i.e. how many of their own cycles they've missed. baselineReliable = false means too few messages for the rhythm to mean anything — treat those as "cannot tell," never guess. lenC = median message length. ans/ansNew/helped = contribution. pronouns is authoritative data — read it, never infer from a name. signals.unansweredNewcomers = newcomers whose first message sat unanswered.
+
+Do not analyse it now — just store it, and let your next cadence cycle (or a direct question) do the work.
+
+Registry:
+${registryJson}`;
+}
+
 export class SendVerifyError extends Error {}
 
 /**
- * Send a message and confirm delivery from a second, independent read —
- * never trust the send call's own response alone.
- *
- * The SEND step shells out to the `minds` CLI rather than posting directly
- * to /v1/messaging/message. That wasn't the original design — every other
- * function in this file talks to the API directly, and that's still right
- * for them (all proven free and reliable by hand on 17 Aug: list, history,
- * conversation-create, balance). But a real side-by-side test found the
- * direct POST leaves a message stranded — Kith visibly registered it (a
- * later CLI query referenced "a different thread" it had been asked the
- * same question in seconds earlier) yet no reply ever appeared in that
- * thread's history, even after several minutes and a real cognition charge.
- * The identical question sent via `minds send --wait` through the CLI, on
- * the same Mind, moments later, worked immediately and correctly. Whatever
- * the CLI does beyond a bare POST — a different endpoint, an explicit
- * generation trigger — it's the proven path, and re-deriving it by trial and
- * error would cost real cognition for no product benefit. Falls back to the
- * CLI for this one step; verification below still uses this file's own
- * tested-reliable direct-fetch history read, never the CLI's own `--wait`
- * payload — that has its own documented staleness gotcha (see
- * docs/evidence/2026-08-16-vertical-slice.md in earlier project history).
- *
- * Two failure modes this exists to catch:
- *   1. A send's immediate response can be STALE — it has returned the
- *      previous message in the thread rather than the new one.
- *   2. A send can SILENTLY FAIL — the call succeeds, nothing was delivered.
- *
- * Both look identical from the caller's side unless you go back and read the
- * conversation fresh. This function does that: send, then poll history a
- * bounded number of times (not an open loop) until a message newer than the
- * send timestamp appears, or give up and report failure explicitly rather
- * than let a stale/missing reply be shown as if it were real.
+ * Send-only, no waiting — for callers that poll for the reply separately
+ * instead of holding one request open. Exists because measured reply
+ * latency for a substantive instruction (e.g. "store this whole registry")
+ * has run 76–111s live against the real Mind — past what a single Vercel
+ * function invocation can wait for (maxDuration is capped at 60s in
+ * vercel.json). The send itself is fast; it's the Mind's own reasoning
+ * that's slow and genuinely unbounded, so the fix is a fast kick-off here
+ * plus a separate, free, poll-able read (see findReply below) rather than
+ * a longer synchronous timeout that will still eventually be too short.
+ */
+export async function sendOnly(
+  apiKey: string,
+  mindId: string,
+  alias: string,
+  text: string,
+): Promise<{ sentAt: string; afterFingerprint?: string }> {
+  const c = client(apiKey);
+  await c.ensureConversation(alias, mindId);
+  let afterFingerprint: string | undefined;
+  try {
+    afterFingerprint = await c.getLatestHistoryFingerprint(alias);
+  } catch {
+    // No prior history is fine.
+  }
+  await c.sendMessage({ alias, messageText: text });
+  return { sentAt: new Date().toISOString(), ...(afterFingerprint !== undefined ? { afterFingerprint } : {}) };
+}
+
+/**
+ * Free — one history read, checked with the library's own reply-detection
+ * (`isReplyHistoryRow`: correct sender-type handling, alias match,
+ * fingerprint ordering, dedup against the sent text), the same logic
+ * `waitForReply` uses internally. Callers poll this on an interval instead
+ * of blocking one request on `sendAndVerify`.
+ */
+export async function findReply(
+  apiKey: string,
+  alias: string,
+  ctx: { sentMessageText?: string; afterFingerprint?: string },
+): Promise<{ text: string; html: string; createdAt: string } | null> {
+  const history = await client(apiKey).getHistory(alias, { limit: 50 });
+  const reply = (history as MessageRecord[])
+    .filter((row) => isReplyHistoryRow(row, { alias, ...ctx }))
+    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""))[0];
+  if (!reply) return null;
+  return {
+    text: plainText(reply.messageText ?? ""),
+    html: reply.messageText ?? "",
+    createdAt: reply.createdAt ?? new Date().toISOString(),
+  };
+}
+
+/**
+ * Send a message and confirm delivery via the library's own waitForReply —
+ * see this file's top comment for why that replaces the old CLI shell-out
+ * and hand-rolled history poll. `getLatestHistoryFingerprint` first mirrors
+ * exactly what the CLI's own `send` command does (see its dist/cli.js
+ * registerSend): capture the high-water mark before sending, so
+ * waitForReply only matches messages strictly after it, never an old reply
+ * already sitting in the thread.
  */
 export async function sendAndVerify(
   apiKey: string,
   mindId: string,
   alias: string,
   text: string,
-  opts: { maxAttempts?: number; delayMs?: number } = {},
+  opts: { timeoutMs?: number } = {},
 ): Promise<{ text: string; html: string; createdAt: string }> {
-  const maxAttempts = opts.maxAttempts ?? 12;
-  const delayMs = opts.delayMs ?? 5000;
+  // Measured live on 18 Aug: a real reply took 111s. 50s leaves headroom
+  // under Vercel's 60s function ceiling (vercel.json's maxDuration) while
+  // staying as generous as that ceiling allows — a reply slower than this
+  // is a real, occasional case, not this function's bug; the caller's error
+  // message says to check `minds history` by hand for exactly that reason.
+  const timeoutMs = opts.timeoutMs ?? 50_000;
+  const c = client(apiKey);
 
-  await ensureConversation(apiKey, mindId, alias);
-  const sentAt = new Date();
+  await c.ensureConversation(alias, mindId);
 
-  // shell execution is required on Windows — `.cmd` files (npm's
-  // global-install shim format) aren't directly spawnable, only
-  // interpretable by cmd.exe. Rather than execFile(file, argsArray,
-  // {shell:true}) — which Node explicitly warns is unsafe (DEP0190): it
-  // can't properly escape an array of args once shell:true is set — build
-  // one fully-quoted command string ourselves and run it via exec(), the
-  // pattern actually designed for "one shell command, I control the
-  // quoting." cmd.exe quoting: wrap each arg in double quotes, double any
-  // internal quotes to escape them.
-  //
-  // The message text is passed as `-` (the CLI's documented stdin marker:
-  // `echo "Hello" | minds send main -`) rather than inline on the command
-  // line, and piped via stdin instead. Two reasons: cmd.exe has an ~8,191
-  // character command-line limit, and this project's own registry payloads
-  // (data/registry.json is already ~8.6KB before shell-quoting doubles
-  // every embedded quote) blow past that when pushed via this same
-  // function — a real, silent failure this fixes, not a hypothetical one.
-  // Every remaining argument is either machine-generated (the alias, from
-  // freshAlias()) or a constant, so there's nothing here that needs the
-  // text's own quoting concerns.
-  const cmdQuote = (s: string) => `"${s.replace(/"/g, '""')}"`;
-  const mindsBin = process.platform === "win32" ? "minds.cmd" : "minds";
-  const command = [mindsBin, "send", alias, "-", "--wait", "--timeout", "90000"]
-    .map(cmdQuote)
-    .join(" ");
-
-  const { exec } = await import("node:child_process");
-  await new Promise<void>((resolve, reject) => {
-    const child = exec(
-      command,
-      {
-        env: { ...process.env, MINDS_BUILDER_API_KEY: apiKey },
-        timeout: 100_000,
-        windowsHide: true,
-      },
-      (err) => {
-        // A non-zero exit here just means the CLI's own --wait step timed out
-        // or errored — not necessarily that the send itself failed. The
-        // history poll below is the real check either way, so don't reject
-        // on this alone; only truly fatal spawn errors (CLI not found) should
-        // stop the flow before verification gets a chance to look for real.
-        // ExecException.code is typed as `number` (process exit code), but a
-        // spawn failure like "binary not found" actually carries a *string*
-        // code ("ENOENT") at runtime — a real gap between Node's types and
-        // its own behavior, not a mistake. `unknown` first, as TS's own
-        // TS2352 suggests, rather than pretending the types overlap.
-        if (err && (err as unknown as NodeJS.ErrnoException).code === "ENOENT") {
-          reject(new Error("`minds` CLI not found — is it installed globally?"));
-        } else {
-          resolve();
-        }
-      },
-    );
-    child.stdin?.end(text, "utf8");
-  });
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    await new Promise((r) => setTimeout(r, delayMs));
-    const history = await getHistory(apiKey, alias);
-    // Kith's own replies: senderType 0, strictly after our send.
-    const reply = history
-      .filter((m) => m.senderType === 0 && new Date(m.createdAt) > sentAt)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
-    if (reply) {
-      return {
-        text: plainText(reply.messageText),
-        html: reply.messageText,
-        createdAt: reply.createdAt,
-      };
-    }
+  let afterFingerprint: string | undefined;
+  try {
+    afterFingerprint = await c.getLatestHistoryFingerprint(alias);
+  } catch {
+    // No prior history is fine — afterFingerprint just stays undefined.
   }
 
-  throw new SendVerifyError(
-    `No verified reply in ${alias} after ${maxAttempts} checks — this is exactly ` +
-      `the "silent failure" case, not "Kith had nothing to say." Check ` +
-      `\`minds history ${alias}\` by hand before retrying.`,
-  );
+  await c.sendMessage({ alias, messageText: text });
+
+  const outcome = await c.waitForReply({
+    alias,
+    timeoutMs,
+    sentMessageText: text,
+    ...(afterFingerprint !== undefined ? { afterFingerprint } : {}),
+  });
+
+  if (outcome.timedOut) {
+    throw new SendVerifyError(
+      `No verified reply in ${alias} within ${Math.round(timeoutMs / 1000)}s — this is ` +
+        `exactly the "silent failure" case, not "Kith had nothing to say." Check ` +
+        `\`minds history ${alias}\` by hand before retrying.`,
+    );
+  }
+
+  const reply = outcome.reply as MessageRecord;
+  return {
+    text: plainText(reply.messageText ?? ""),
+    html: reply.messageText ?? "",
+    createdAt: reply.createdAt ?? new Date().toISOString(),
+  };
 }

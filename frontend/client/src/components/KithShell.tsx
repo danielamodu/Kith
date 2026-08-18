@@ -139,6 +139,7 @@ export function PageShell({ children, eyebrow, showBudget = false }: { children:
           <Link href="/demo" className={location === "/demo" ? "is-active" : ""}>Demo</Link>
           <Link href="/demo/feed" className={location === "/demo/feed" ? "is-active" : ""}>Live feed</Link>
           <Link href="/how-it-works" className={location === "/how-it-works" ? "is-active" : ""}>How it works</Link>
+          <Link href="/setup" className={location === "/setup" ? "is-active" : ""}>Set up yours</Link>
           <button className="icon-button" onClick={() => toast("Kith notices the quiet parts.")} aria-label="About Kith"><CircleHelp size={17} /></button>
         </nav>
       </header>
@@ -157,8 +158,17 @@ export function SignalTag({ children, tone = "mint" }: { children: ReactNode; to
   return <span className={`signal-tag signal-tag--${tone}`}>{children}</span>;
 }
 
-export function Surface({ children, className = "", accent = "" }: { children: ReactNode; className?: string; accent?: "" | "mint" | "butter" | "coral" | "lavender" }) {
-  return <section className={`surface ${accent ? `surface--${accent}` : ""} ${className}`}>{children}</section>;
+export function Surface({
+  children,
+  className = "",
+  accent = "",
+  ...rest
+}: {
+  children: ReactNode;
+  className?: string;
+  accent?: "" | "mint" | "butter" | "coral" | "lavender";
+} & React.HTMLAttributes<HTMLElement>) {
+  return <section className={`surface ${accent ? `surface--${accent}` : ""} ${className}`} {...rest}>{children}</section>;
 }
 
 export function EmptyState({ title = "All quiet — nobody needs you right now.", body = "Kith is holding the room open. When something changes, it will be here." }: { title?: string; body?: string }) {
