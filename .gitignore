@@ -7,6 +7,11 @@
 data/
 *.export.json
 
+# Internal working notes — written second-person to whoever's running this
+# project, not documentation for a public reader. Kept locally.
+day-1-checklist.md
+demo-script.md
+
 # Node
 node_modules/
 dist/

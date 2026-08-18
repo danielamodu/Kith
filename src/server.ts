@@ -360,7 +360,14 @@ app.get(/^(?!\/api\/).*/, (_req, res) => {
   res.sendFile(root("public/index.html"));
 });
 
-const PORT = Number(env.PORT ?? 3131);
-app.listen(PORT, () => {
-  console.log(`Kith web UI: http://localhost:${PORT}`);
-});
+// Vercel imports this module and calls the exported handler directly per
+// request — it must not also bind a port itself. VERCEL is set automatically
+// in both its build and runtime environments, unset everywhere else.
+if (!process.env.VERCEL) {
+  const PORT = Number(env.PORT ?? 3131);
+  app.listen(PORT, () => {
+    console.log(`Kith web UI: http://localhost:${PORT}`);
+  });
+}
+
+export default app;

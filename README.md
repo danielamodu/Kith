@@ -202,8 +202,10 @@ docs/
   manus-ux-brief.md        sitemap and API contract for the frontend rebuild
   telegram-setup.md, discord-setup.md
   evidence/                dated records of things proven against the live Mind
-demo-script.md             the 1:50 submission video, written before the build
-day-1-checklist.md         platform validation gates
 ```
+
+Kept locally, not published: `demo-script.md` (the shooting script for the submission
+video) and `day-1-checklist.md` (day-1 working notes). Both are internal planning
+documents, not written for a public reader — see the note in `.gitignore`.
 
 `npm test` runs the full suite against the fixture. See `docs/architecture.md` for status.
