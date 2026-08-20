@@ -231,6 +231,7 @@ export async function startPush(
   apiKey: string,
   mindId: string,
   registry: Registry,
+  watchlist: Watchlist,
 ): Promise<{
   alias: string;
   sentAt: string;
@@ -239,8 +240,9 @@ export async function startPush(
   before: number | null;
 }> {
   const registryJson = JSON.stringify(registry);
+  const watchlistJson = JSON.stringify(watchlist);
   const alias = freshAlias("kith-onboard");
-  const text = pushInstruction(registryJson);
+  const text = pushInstruction(registryJson, watchlistJson);
   // Best-effort, and captured before the send: this is display/log
   // bookkeeping only (mirrors cli-push.ts and /api/live-answer/refresh, the
   // two existing paid call sites — see their own comments on why a balance

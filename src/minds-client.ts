@@ -152,16 +152,34 @@ export function freshAlias(prefix: string): string {
  * (our own Mind) and onboarding.ts (a creator's own Mind, from the web setup
  * wizard) so both send the identical, tested wording rather than two copies
  * drifting apart.
+ *
+ * Pushes BOTH artifacts in one message, not just the registry. Confirmed
+ * live this was a real, load-bearing gap: earlier pushes only sent
+ * kith-registry, and when later asked a routine question, Kith's own reply
+ * said outright that "a kith-watchlist artifact did not exist before this
+ * cycle — I built one just now [from the full registry]." That's exactly
+ * the cost the registry/watchlist split (see registry.ts's own header
+ * comment) exists to avoid — reconstructing the small artifact from the
+ * full one on every cycle instead of just reading something already
+ * small. One combined send (not two separate sends, which would double
+ * the cognition cost and the wait) covers both.
  */
-export function pushInstruction(registryJson: string): string {
-  return `This is the Kith member registry for the community you steward. Please store it as a durable Artifact named 'kith-registry' so it survives across cognition cycles, overwriting any previous version, and tell me the artifact ID.
+export function pushInstruction(registryJson: string, watchlistJson: string): string {
+  return `This is the Kith memory for the community you steward — two artifacts, not one. Please store BOTH as durable Artifacts, overwriting any previous version of each, and tell me both artifact IDs:
+1. The full member registry, named 'kith-registry'.
+2. The watchlist (only members currently carrying a signal), named 'kith-watchlist'.
+
+Do not derive the watchlist yourself from the registry, now or on a future cycle — it is provided separately, already built, specifically so you never have to reconstruct it. Read kith-watchlist for routine "who needs attention" questions and cadence cycles; only read the full kith-registry when you need a specific person's detail the watchlist doesn't carry, or need to see someone who has no live signal at all.
 
 Field meanings: rhythmH = median hours between that person's posts, their own personal baseline. spreadH = variability of that rhythm. quietForH = hours silent as of generatedAt (not "today" — always reason against generatedAt, never the wall clock). quietRatio = quietForH divided by rhythmH, i.e. how many of their own cycles they've missed. baselineReliable = false means too few messages for the rhythm to mean anything — treat those as "cannot tell," never guess. lenC = median message length. ans/ansNew/helped = contribution. pronouns is authoritative data — read it, never infer from a name. signals.unansweredNewcomers = newcomers whose first message sat unanswered.
 
-Do not analyse it now — just store it, and let your next cadence cycle (or a direct question) do the work.
+Do not analyse either one now — just store both, and let your next cadence cycle (or a direct question) do the work.
 
 Registry:
-${registryJson}`;
+${registryJson}
+
+Watchlist:
+${watchlistJson}`;
 }
 
 export class SendVerifyError extends Error {}

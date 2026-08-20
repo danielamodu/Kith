@@ -221,6 +221,7 @@ export default function Setup() {
         apiKey,
         mindId,
         registry: buildResult.registry,
+        watchlist: buildResult.watchlist,
         confirm: true,
       });
       toast("Sent. This can take a minute or two — Kith is actually reading it.");

@@ -48,20 +48,24 @@ Missing config. Need both in .env:
 }
 
 const registryPath = root("data/registry.json");
-if (!existsSync(registryPath)) {
-  console.error("No data/registry.json — run `npm run registry` first.");
+const watchlistPath = root("data/watchlist.json");
+if (!existsSync(registryPath) || !existsSync(watchlistPath)) {
+  console.error("Missing data/registry.json or data/watchlist.json — run `npm run registry` first.");
   process.exit(1);
 }
 
 const registry = await readFile(registryPath, "utf8");
+const watchlist = await readFile(watchlistPath, "utf8");
 const parsed = JSON.parse(registry);
+const parsedWatchlist = JSON.parse(watchlist);
 
 console.log(`
-About to push to your Mind:
+About to push to your Mind (both artifacts, one send):
   community        ${parsed.community}
   members          ${parsed.memberCount}
+  watched          ${parsedWatchlist.watching?.length ?? 0}
   generatedAt      ${parsed.generatedAt}
-  payload size     ~${Math.ceil(registry.length / 4)} tokens
+  payload size     ~${Math.ceil((registry.length + watchlist.length) / 4)} tokens
 
 This sends a real message and costs real cognition (a few, based on prior
 measurement — payload size drives cost, so a large registry costs more).
@@ -81,7 +85,7 @@ const before = await getCognitionBalance(API_KEY, MIND_ID).catch(() => null);
 
 // Shared with onboarding.ts's web push route — see pushInstruction's own
 // comment in minds-client.ts for why this wording is kept in one place.
-const instruction = pushInstruction(registry);
+const instruction = pushInstruction(registry, watchlist);
 
 const alias = freshAlias("kith-push");
 console.log(`\nSending (conversation: ${alias})...`);

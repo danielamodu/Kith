@@ -206,10 +206,24 @@ const LIVE_QUESTION = "Is anyone in the community struggling right now?";
 // passing deeper in the answer (docs/evidence/2026-08-17-pronoun-guard
 // -caught-a-real-case.md) — restating the rule explicitly, every time, is
 // the cheap half of the fix; findPronounIssues below is the other half.
+//
+// The kith-watchlist steer is not cosmetic — it's the whole reason the
+// registry/watchlist split exists at all (see registry.ts's own header
+// comment). Without it, an open question like this one gives the Mind no
+// reason to prefer the small watchlist artifact over the full registry,
+// and on a real, large community it will fall back to reading the full
+// thing cold. Confirmed live against a real 193-member community: the
+// exact same question, sent without this steer, took over 75 minutes and
+// never definitively returned — almost certainly a full-registry read, not
+// a platform problem. The watchlist is ~66 members / ~5K tokens regardless
+// of how large the registry gets, which is the entire point of building it
+// as a separate, cadence-sized artifact in the first place.
 const LIVE_PROMPT =
-  `${LIVE_QUESTION} When you refer to any member by name, including anyone ` +
+  `Check your kith-watchlist artifact (not the full kith-registry) to answer this: ${LIVE_QUESTION} ` +
+  `The watchlist already contains everyone currently carrying a signal — you should not need the full ` +
+  `registry to answer this question. When you refer to any member by name, including anyone ` +
   `mentioned only briefly or in passing, use their stated pronouns from the ` +
-  `registry — they/them unless a pronoun is explicitly recorded for that ` +
+  `watchlist — they/them unless a pronoun is explicitly recorded for that ` +
   `specific person. This applies to every person named in your answer, not ` +
   `only whoever the answer is mainly about.`;
 
@@ -449,13 +463,17 @@ app.post("/api/setup/build", async (req, res) => {
 // itself is quick, but a real reply has measured 76-111s live, past what
 // one function invocation can hold open — see startPush's own comment.
 app.post("/api/setup/push", async (req, res) => {
-  const { apiKey, mindId, registry, confirm } = req.body ?? {};
+  const { apiKey, mindId, registry, watchlist, confirm } = req.body ?? {};
   if (typeof apiKey !== "string" || !apiKey.trim() || typeof mindId !== "string" || !mindId.trim()) {
     res.status(400).json({ error: "Missing Minds Builder API key or Mind id." });
     return;
   }
   if (!registry || typeof registry !== "object") {
     res.status(400).json({ error: "Missing registry — build it first." });
+    return;
+  }
+  if (!watchlist || typeof watchlist !== "object") {
+    res.status(400).json({ error: "Missing watchlist — build it first." });
     return;
   }
   if (confirm !== true) {
@@ -465,7 +483,7 @@ app.post("/api/setup/push", async (req, res) => {
     return;
   }
   try {
-    res.json(await startPush(apiKey.trim(), mindId.trim(), registry));
+    res.json(await startPush(apiKey.trim(), mindId.trim(), registry, watchlist));
   } catch (err) {
     onboardingError(res, err);
   }
