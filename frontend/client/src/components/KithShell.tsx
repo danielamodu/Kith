@@ -129,9 +129,20 @@ export async function pollUntilDone<T extends { done: boolean }>(
     }
     try {
       const result = await check();
+      // Re-check after the request resolves, not just before it started —
+      // this call can take real time (this is exactly the 76-111s-latency
+      // case), and the component can unmount while it's in flight. Without
+      // this, a request that resolves done:true after unmount would still
+      // be returned to a caller that then calls setState on a dead
+      // component — the bug this whole helper exists to prevent, just in
+      // the window during a request rather than between them.
+      if (opts.isMounted && !opts.isMounted()) {
+        throw new PollAbortedError("Stopped polling — the page navigated away.");
+      }
       consecutiveFailures = 0;
       if (result.done) return result;
     } catch (err) {
+      if (err instanceof PollAbortedError) throw err;
       consecutiveFailures++;
       if (consecutiveFailures >= maxConsecutiveFailures) throw err;
     }

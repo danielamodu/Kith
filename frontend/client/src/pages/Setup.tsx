@@ -171,7 +171,13 @@ export default function Setup() {
             apiKey,
             mindId,
             alias: start.alias,
-            sentMessageText: start.sentMessageText,
+            // Truncated, not the full instruction text (which embeds the
+            // whole registry — can be tens of KB): this is only compared
+            // for a dedup check server-side, and the server-side sender-type
+            // check alone already excludes our own sent message from being
+            // mistaken for a reply. No need to re-upload the full payload
+            // on every one of up to 40 poll requests over ~2 minutes.
+            sentMessageText: start.sentMessageText.slice(0, 300),
             afterFingerprint: start.afterFingerprint,
             sentAfter: start.sentAt,
             before: start.before,
@@ -186,14 +192,15 @@ export default function Setup() {
       if (err instanceof PollAbortedError) return; // navigated away — nothing to show
       if (err instanceof PollTimeoutError) {
         setPushError(
-          "No reply yet after 2 minutes of checking. The send itself succeeded — this is slow, not failed. " +
-            "Hit \"Check again\" below, check `minds history` on your Mind, or copy the registry JSON above and push it with `npm run push`.",
+          "No reply yet after 2 minutes of checking. Nothing indicates the send failed — this is most likely just " +
+            "slow, not broken. Hit \"Check again\" below, check `minds history` on your Mind, or copy the registry " +
+            "JSON above and push it with `npm run push`.",
         );
       } else {
         setPushError(
           err instanceof Error
             ? err.message
-            : "Checking the reply failed. Hit \"Check again\" — the send itself likely still succeeded.",
+            : "Checking the reply failed. Hit \"Check again\" — the send may still have gone through.",
         );
       }
     } finally {

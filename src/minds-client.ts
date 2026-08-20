@@ -32,6 +32,7 @@
 import {
   createMindsClient,
   isReplyHistoryRow,
+  MindsApiError,
   type MessageRecord,
 } from "@animocabrands/minds-client-lib";
 
@@ -179,13 +180,19 @@ export class SendVerifyError extends Error {}
  *     independent `sentAfter` timestamp floor, so a missing fingerprint
  *     degrades to timestamp-only ordering rather than no ordering at all —
  *     it doesn't silently disable the safety net the way it did before.
- *   - sendMessage's failure is logged, not thrown. A network error can fire
- *     after the request was actually delivered and processed (the response
- *     was what got lost) — throwing here would report "failed" on a send
- *     that actually succeeded, and a caller that then retries gets a
- *     second real conversation and a second real charge with no way to
- *     notice. Verification (waitForReply / findReply's poll) is the real
- *     check either way, exactly as the old CLI-based version reasoned.
+ *   - sendMessage's failure is only swallowed when it's genuinely AMBIGUOUS
+ *     — a network-level failure (MindsApiError with status 0), where the
+ *     request may have been delivered and only the response was lost.
+ *     Throwing on that would report "failed" on a send that actually
+ *     succeeded, and a caller that then retries gets a second real
+ *     conversation and a second real charge with no way to notice.
+ *     Verification (waitForReply / findReply's poll) is the real check for
+ *     that case. A DEFINITE rejection — a real HTTP status back from the
+ *     API (401 bad key, 402 insufficient cognition, etc.) — is not
+ *     ambiguous at all and is rethrown immediately: swallowing that too
+ *     (an earlier version of this function did) meant a caller could poll
+ *     for the full ~2 minutes and then be told "the send succeeded" when
+ *     it demonstrably never reached the Mind.
  */
 async function prepareSend(
   c: ReturnType<typeof client>,
@@ -207,6 +214,11 @@ async function prepareSend(
   try {
     await c.sendMessage({ alias, messageText: text });
   } catch (err) {
+    if (err instanceof MindsApiError && err.status !== 0) {
+      // A real HTTP response came back and it was a rejection — not an
+      // ambiguous "did it land" case. The Mind demonstrably never got this.
+      throw err;
+    }
     console.error(`sendMessage may still have gone through for ${alias}: ${(err as Error).message}`);
   }
 
@@ -240,16 +252,33 @@ export function sendOnly(
  * `sentAfter` timestamp floor (see prepareSend's comment for why that
  * floor exists rather than relying on the fingerprint alone). Callers poll
  * this on an interval instead of blocking one request on `sendAndVerify`.
+ *
+ * Deliberately calls the library's raw `getHistory` here, NOT this file's
+ * own `getHistory` wrapper — that wrapper normalises `senderType` to `1`
+ * for anything ambiguous (the right default for presentation.ts, which
+ * only needs a binary Kith/human split), but `isReplyHistoryRow` has its
+ * OWN fallback detection for exactly that ambiguous case (a populated
+ * `mindId` field on a row with no reliable `senderType`), and forcing
+ * `senderType` to `1` beforehand short-circuits that fallback and hides a
+ * real reply. Normalising also drops the row's `alias` field, silently
+ * disabling `isReplyHistoryRow`'s cross-conversation guard. Passing it raw
+ * `MessageRecord`s keeps both checks live and correct.
  */
 export async function findReply(
   apiKey: string,
   alias: string,
   ctx: { sentMessageText?: string; afterFingerprint?: string; sentAfter?: string },
 ): Promise<{ text: string; html: string; createdAt: string } | null> {
-  const history = await getHistory(apiKey, alias, { limit: 50 });
+  const history = await client(apiKey).getHistory(alias, {
+    limit: 50,
+    ...(ctx.afterFingerprint ? { after: ctx.afterFingerprint } : {}),
+  });
+
+  const floorTime = ctx.sentAfter ? new Date(ctx.sentAfter).getTime() : undefined;
+
   const candidates = history.filter((row) => {
     if (
-      !isReplyHistoryRow(row as unknown as MessageRecord, {
+      !isReplyHistoryRow(row, {
         alias,
         sentMessageText: ctx.sentMessageText,
         afterFingerprint: ctx.afterFingerprint,
@@ -257,16 +286,30 @@ export async function findReply(
     ) {
       return false;
     }
-    if (ctx.sentAfter && row.createdAt && row.createdAt <= ctx.sentAfter) return false;
+    if (floorTime !== undefined) {
+      // Parsed as Date, not compared as raw strings — ISO timestamps at
+      // different precisions (with/without milliseconds) don't sort
+      // correctly lexicographically. A row with no parseable createdAt is
+      // EXCLUDED (fail closed) rather than passed through, matching the
+      // safe-default pattern used everywhere else in this file.
+      const rowTime = row.createdAt ? new Date(row.createdAt).getTime() : NaN;
+      if (!Number.isFinite(rowTime) || rowTime <= floorTime) return false;
+    }
     return true;
   });
 
   // Latest first — not the first match after an ascending sort, which
   // picked the OLDEST qualifying row and could return a stale prior reply
   // on a conversation with more than one exchange in its window.
-  const reply = candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const reply = candidates.sort(
+    (a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
+  )[0];
   if (!reply) return null;
-  return { text: plainText(reply.messageText), html: reply.messageText, createdAt: reply.createdAt };
+  return {
+    text: plainText(reply.messageText ?? ""),
+    html: reply.messageText ?? "",
+    createdAt: reply.createdAt ?? new Date().toISOString(),
+  };
 }
 
 /**
@@ -292,7 +335,7 @@ export async function sendAndVerify(
   const timeoutMs = opts.timeoutMs ?? 180_000;
   const c = client(apiKey);
 
-  const { afterFingerprint } = await prepareSend(c, mindId, alias, text);
+  const { sentAt, afterFingerprint } = await prepareSend(c, mindId, alias, text);
 
   const outcome = await c.waitForReply({
     alias,
@@ -310,6 +353,20 @@ export async function sendAndVerify(
   }
 
   const reply = outcome.reply as MessageRecord;
+
+  // Independent of the library's own afterFingerprint check (which is a
+  // no-op when getLatestHistoryFingerprint failed in prepareSend) — a hard
+  // timestamp floor, same as findReply's, so this path isn't left with no
+  // ordering safety net at all when the fingerprint capture didn't work.
+  const sentTime = new Date(sentAt).getTime();
+  const replyTime = reply.createdAt ? new Date(reply.createdAt).getTime() : NaN;
+  if (!Number.isFinite(replyTime) || replyTime <= sentTime) {
+    throw new SendVerifyError(
+      `Only a stale reply (or none) was found in ${alias} — treating as unverified. Check ` +
+        `\`minds history ${alias}\` by hand before retrying.`,
+    );
+  }
+
   return {
     text: plainText(reply.messageText ?? ""),
     html: reply.messageText ?? "",

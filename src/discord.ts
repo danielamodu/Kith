@@ -48,7 +48,16 @@ const MSG_REPLY = 19;
 const MSG_MEMBER_JOIN = 7;
 const CHANNEL_TEXT = 0;
 
-async function call<T>(token: string, path: string, attempt = 0): Promise<T> {
+/**
+ * Thrown when a 429 retry wait would push past a caller-supplied wall-clock
+ * deadline. Distinct from a normal Error so walkHistory can tell "we hit
+ * our own time budget" apart from a real failure and degrade gracefully
+ * (partial backfill, deadlineHit: true) instead of the whole request
+ * erroring out or a Vercel function getting killed mid-flight.
+ */
+export class DeadlineExceededError extends Error {}
+
+async function call<T>(token: string, path: string, attempt = 0, deadline?: number): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     headers: { authorization: `Bot ${token}` },
   });
@@ -59,8 +68,16 @@ async function call<T>(token: string, path: string, attempt = 0): Promise<T> {
     const body = (await res.json().catch(() => ({}))) as { retry_after?: number };
     const waitMs = Math.ceil((body.retry_after ?? 1) * 1000) + 100;
     if (attempt > 8) throw new Error(`Rate limited repeatedly on ${path}`);
+    // A page's own retry backoff isn't bounded by maxPages at all — under
+    // sustained rate-limiting a single page could burn past a caller's
+    // whole time budget on its own. Check before waiting, not after.
+    if (deadline !== undefined && Date.now() + waitMs > deadline) {
+      throw new DeadlineExceededError(
+        `Rate limited on ${path}; waiting ${waitMs}ms would exceed the deadline`,
+      );
+    }
     await new Promise((r) => setTimeout(r, waitMs));
-    return call<T>(token, path, attempt + 1);
+    return call<T>(token, path, attempt + 1, deadline);
   }
 
   if (!res.ok) {
@@ -89,12 +106,12 @@ export async function listTextChannels(
 export function fetchPage(
   token: string,
   channelId: string,
-  opts: { before?: string; after?: string; limit?: number } = {},
+  opts: { before?: string; after?: string; limit?: number; deadline?: number } = {},
 ): Promise<DiscordMessage[]> {
   const q = new URLSearchParams({ limit: String(opts.limit ?? 100) });
   if (opts.before) q.set("before", opts.before);
   if (opts.after) q.set("after", opts.after);
-  return call<DiscordMessage[]>(token, `/channels/${channelId}/messages?${q}`);
+  return call<DiscordMessage[]>(token, `/channels/${channelId}/messages?${q}`, 0, opts.deadline);
 }
 
 /**
@@ -195,7 +212,16 @@ export async function walkHistory(
       break;
     }
 
-    const page = await fetchPage(token, channelId, { before, limit: 100 });
+    let page: DiscordMessage[];
+    try {
+      page = await fetchPage(token, channelId, { before, limit: 100, deadline });
+    } catch (err) {
+      if (err instanceof DeadlineExceededError) {
+        deadlineHit = true;
+        break;
+      }
+      throw err;
+    }
     if (page.length === 0) break;
 
     const messages: StoredMessage[] = [];
