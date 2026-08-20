@@ -19,6 +19,21 @@ import type { Composite, Observation } from "./detectors.ts";
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
+/**
+ * replyNormH specifically needs finer precision than round1's one decimal
+ * place: it's a MEDIAN across the whole community, and a genuinely active
+ * Discord (people replying within a minute or two) has a true median well
+ * under 0.05h — round1 rounds that straight down to a literal 0. That's
+ * not just cosmetically wrong: replyNormH is a denominator wherever it's
+ * used to judge "how many multiples of normal has this newcomer waited,"
+ * and dividing by 0 turns every wait into an undefined/infinite ratio.
+ * Confirmed live: a real 193-member community's push came back with
+ * replyNormH 0 and Kith itself flagged that every newcomer's wait was
+ * reading as ∞× normal because of it. Two decimals (down to ~36s
+ * resolution) plus a hard floor so this can never be a literal 0.
+ */
+const roundReplyNorm = (n: number) => Math.max(0.01, Math.round(n * 100) / 100);
+
 /** One member, compressed. Keys are short because this is stored and re-read often. */
 export type RegistryEntry = {
   /** mirrors the Mind's own stream-entity convention: community.member.<slug> */
@@ -185,7 +200,7 @@ export function buildRegistry(
     generatedAt: generatedAt.toISOString(),
     window: { from: isoDay(community.from), to: isoDay(community.to) },
     memberCount: members.length,
-    replyNormH: round1(replyNormHours),
+    replyNormH: roundReplyNorm(replyNormHours),
     signals: { unansweredNewcomers },
     members,
   };

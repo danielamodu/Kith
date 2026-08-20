@@ -245,13 +245,29 @@ export function sendOnly(
   return prepareSend(client(apiKey), mindId, alias, text);
 }
 
+/** Local-clock vs server-clock skew is real, measured live: a genuine 13s-fast
+ * reply was once flagged "stale" because this machine's clock ran ahead of
+ * the Minds server's. A generous grace window absorbs realistic drift while
+ * still catching a truly old, genuinely-stale reply (minutes/hours old, not
+ * seconds). Only matters for the FALLBACK path below — see findReply's
+ * comment for why the primary path (fingerprint-based) doesn't need it.
+ */
+const CLOCK_SKEW_GRACE_MS = 120_000;
+
 /**
  * Free — one history read, checked with the library's own reply-detection
  * (`isReplyHistoryRow`: correct sender-type handling, alias match,
- * fingerprint ordering, dedup against the sent text) plus an independent
- * `sentAfter` timestamp floor (see prepareSend's comment for why that
- * floor exists rather than relying on the fingerprint alone). Callers poll
- * this on an interval instead of blocking one request on `sendAndVerify`.
+ * fingerprint ordering, dedup against the sent text) plus, ONLY when
+ * `afterFingerprint` wasn't available, a `sentAfter` timestamp floor as a
+ * fallback (see prepareSend's comment for why fingerprint capture can
+ * fail). This is deliberately NOT layered on top of a working fingerprint
+ * check: the fingerprint is server-generated on both sides of the
+ * comparison, so it can't suffer clock skew — this file's own local
+ * `sentAt` versus the server's `createdAt` can, and did, live (a real 13s
+ * reply was once wrongly rejected as "stale" this way). Applying the
+ * timestamp floor unconditionally made the common, already-working case
+ * strictly worse; it's now only consulted when the fingerprint genuinely
+ * isn't there to do the job, and even then with a grace window.
  *
  * Deliberately calls the library's raw `getHistory` here, NOT this file's
  * own `getHistory` wrapper — that wrapper normalises `senderType` to `1`
@@ -274,7 +290,11 @@ export async function findReply(
     ...(ctx.afterFingerprint ? { after: ctx.afterFingerprint } : {}),
   });
 
-  const floorTime = ctx.sentAfter ? new Date(ctx.sentAfter).getTime() : undefined;
+  // Fallback only — see doc comment above.
+  const floorTime =
+    !ctx.afterFingerprint && ctx.sentAfter
+      ? new Date(ctx.sentAfter).getTime() - CLOCK_SKEW_GRACE_MS
+      : undefined;
 
   const candidates = history.filter((row) => {
     if (
@@ -354,17 +374,23 @@ export async function sendAndVerify(
 
   const reply = outcome.reply as MessageRecord;
 
-  // Independent of the library's own afterFingerprint check (which is a
-  // no-op when getLatestHistoryFingerprint failed in prepareSend) — a hard
-  // timestamp floor, same as findReply's, so this path isn't left with no
-  // ordering safety net at all when the fingerprint capture didn't work.
-  const sentTime = new Date(sentAt).getTime();
-  const replyTime = reply.createdAt ? new Date(reply.createdAt).getTime() : NaN;
-  if (!Number.isFinite(replyTime) || replyTime <= sentTime) {
-    throw new SendVerifyError(
-      `Only a stale reply (or none) was found in ${alias} — treating as unverified. Check ` +
-        `\`minds history ${alias}\` by hand before retrying.`,
-    );
+  // Fallback only, same as findReply's — a hard timestamp floor for when
+  // getLatestHistoryFingerprint failed in prepareSend and the library's own
+  // afterFingerprint check had nothing to work with. NOT applied when the
+  // fingerprint check already ran (it's server-generated on both ends, so
+  // it can't suffer clock skew the way comparing this machine's local
+  // `sentAt` against the server's `createdAt` can — confirmed live, a
+  // genuine 13s-fast reply was once wrongly rejected this way). Grace
+  // window absorbs realistic clock drift in the fallback case.
+  if (afterFingerprint === undefined) {
+    const sentTime = new Date(sentAt).getTime() - CLOCK_SKEW_GRACE_MS;
+    const replyTime = reply.createdAt ? new Date(reply.createdAt).getTime() : NaN;
+    if (!Number.isFinite(replyTime) || replyTime <= sentTime) {
+      throw new SendVerifyError(
+        `Only a stale reply (or none) was found in ${alias} — treating as unverified. Check ` +
+          `\`minds history ${alias}\` by hand before retrying.`,
+      );
+    }
   }
 
   return {
