@@ -47,6 +47,20 @@ export type Thresholds = {
   gapRatio: number;
   /** Additional robust-outlier guard, in MADs above the median. */
   gapMads: number;
+  /**
+   * Below this median gap (hours), a person posts too frequently for
+   * "rhythm" to mean anything at hour granularity, and the ratio math
+   * breaks down. Real bug, found live: a member with 1,584 messages
+   * posted in rapid bursts had a true median gap of a few seconds
+   * (rounds to 0.0 for display, but isn't literally 0) — a completely
+   * normal 24h absence divided by that near-zero rhythm produced a
+   * ~24,000× ratio, trivially clearing gapRatio and flagging a false
+   * gap-drift for someone who was actually fine. The old guard
+   * (`medianGapHours <= 0`) only excluded exactly zero, not "small
+   * enough to be meaningless" — mirrors the same near-zero-denominator
+   * bug replyNormH had in registry.ts.
+   */
+  minRhythmHours: number;
   /** Recent messages this fraction of their norm or shorter counts as tapering. */
   toneShrink: number;
   /** A newcomer's first post is "ignored" past this multiple of the community norm. */
@@ -59,6 +73,7 @@ export const DEFAULT_THRESHOLDS: Thresholds = {
   minObservations: 8,
   gapRatio: 3,
   gapMads: 3,
+  minRhythmHours: 0.5,
   toneShrink: 0.6,
   newcomerPatience: 3,
   contributionFloor: 0.4,
@@ -132,7 +147,9 @@ export function d2GapDrift(
     // where most false positives die.
     if (s.messageCount < t.minObservations) continue; // unreliable baseline
     if (s.saidFarewell) continue; // they left on purpose, that isn't drift
-    if (s.medianGapHours <= 0) continue;
+    // Below minRhythmHours the ratio's denominator is too small for the
+    // ratio to mean anything — see the field's own comment on Thresholds.
+    if (s.medianGapHours < t.minRhythmHours) continue;
 
     const ratio = s.currentGapHours / s.medianGapHours;
     const madGuard = s.medianGapHours + t.gapMads * s.gapMadHours;

@@ -12,8 +12,9 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { loadExport } from "./ingest.ts";
 import { buildMemberStates } from "./members.ts";
-import { runAll, communityReplyNorm } from "./detectors.ts";
+import { runAll, communityReplyNorm, d2GapDrift, DEFAULT_THRESHOLDS } from "./detectors.ts";
 import { buildWatchlist, buildRegistry, estimateTokens } from "./registry.ts";
+import type { MemberState } from "./types.ts";
 
 // fileURLToPath, not URL.pathname — the latter yields "/C:/..." on Windows.
 const fixture = fileURLToPath(new URL("../data/dev-export.json", import.meta.url));
@@ -76,6 +77,61 @@ test("tone shift never stands alone", () => {
     (c) => c.parts.length === 1 && c.parts[0]!.kind === "tone-shift",
   );
   assert.equal(soloTone.length, 0);
+});
+
+/**
+ * Real regression, hit live: a real member with 1,584 messages posted in
+ * rapid bursts had a true median gap of a few seconds — rounds to 0.0h for
+ * display, but the raw value used by the detector is nonzero, so the old
+ * guard (`medianGapHours <= 0`) let it through. A completely normal 24.2h
+ * absence divided by that near-zero rhythm produced a ratio in the tens of
+ * thousands, trivially clearing gapRatio and flagging gap-drift for someone
+ * who was actually fine. Kith itself caught this live and called it out as
+ * a watchlist-construction artifact, not a real signal.
+ */
+function fakeMemberState(overrides: Partial<MemberState>): MemberState {
+  return {
+    id: "test-member",
+    name: "Test Member",
+    firstSeen: new Date("2026-01-01"),
+    lastSeen: new Date("2026-08-01"),
+    tenureDays: 213,
+    activeSpanDays: 213,
+    messageCount: 1584,
+    medianGapHours: 0.001,
+    gapMadHours: 0.001,
+    currentGapHours: 24.2,
+    medianLength: 40,
+    recentMedianLength: 40,
+    answersGiven: 171,
+    distinctRepliedTo: 100,
+    answersToNewcomers: 157,
+    saidFarewell: false,
+    ...overrides,
+  };
+}
+
+test("a bursty poster's near-zero rhythm doesn't turn a normal absence into false gap-drift", () => {
+  const states = new Map([["bursty", fakeMemberState({ id: "bursty", name: "Bursty Poster" })]]);
+  const observations = d2GapDrift(states, DEFAULT_THRESHOLDS);
+  assert.equal(observations.filter((o) => o.memberName === "Bursty Poster").length, 0);
+});
+
+test("a genuinely slow, meaningful rhythm still correctly triggers gap-drift", () => {
+  const states = new Map([
+    [
+      "slow",
+      fakeMemberState({
+        id: "slow",
+        name: "Slow Poster",
+        medianGapHours: 8,
+        gapMadHours: 1,
+        currentGapHours: 200,
+      }),
+    ],
+  ]);
+  const observations = d2GapDrift(states, DEFAULT_THRESHOLDS);
+  assert.equal(observations.filter((o) => o.memberName === "Slow Poster").length, 1);
 });
 
 test("unanswered newcomers batch into one item, not one alert each", () => {
