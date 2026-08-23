@@ -18,6 +18,7 @@ export const assetUrls = {
 };
 
 export type WatchItem = {
+  key?: string;
   member?: string;
   name?: string;
   alias?: string;

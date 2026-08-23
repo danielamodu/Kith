@@ -248,6 +248,11 @@ h2 { margin: 0; font-family: Fraunces, Georgia, serif; font-size: clamp(34px, 4v
 .dots-button { padding: 0; color: #aaa3a9; background: none; cursor: pointer; letter-spacing: 2px; }
 .watch-card > p { margin: 17px 0 14px; color: #706b73; font-size: 12px; line-height: 1.45; }
 .signal-row { display: flex; gap: 5px; flex-wrap: wrap; }
+.draft-trigger { margin-top: 12px; padding: 0; }
+.draft-panel { margin-top: 10px; }
+.draft-result { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 14px; background: rgba(216,204,255,0.2); }
+.draft-result p { margin: 0; color: #4a4550; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+.draft-result .text-button { align-self: flex-start; padding: 0; }
 .empty-state { min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 25px; text-align: center; }
 .empty-lockup { width: 96px; height: auto; margin-bottom: 18px; object-fit: contain; opacity: 0.92; filter: drop-shadow(0 7px 11px rgba(65,54,41,0.09)); }
 .empty-feed-lockup { width: 90px; height: auto; margin-bottom: 12px; opacity: 0.9; filter: drop-shadow(0 7px 11px rgba(65,54,41,0.08)); }

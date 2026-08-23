@@ -34,6 +34,7 @@ import {
   findPronounIssues,
   type WatchEntry,
 } from "./presentation.ts";
+import type { Watchlist } from "./registry.ts";
 import { createStore } from "./kv-store.ts";
 import {
   verifyDiscordToken,
@@ -334,6 +335,117 @@ app.post("/api/live-answer/status", async (req, res) => {
   }
 
   res.json({ done: true, ...record });
+});
+
+// ── Draft, don't send: a per-member check-in draft, never auto-sent ────────
+//
+// Mirrors /api/live-answer exactly — fast kick-off + free poll — scoped to
+// one watchlist member instead of one fixed question. Nothing is ever sent
+// anywhere on the creator's behalf: the Mind's reply IS the deliverable.
+// Copying it and sending it themselves is a deliberate human step this
+// route intentionally does not skip — there is no send-on-their-behalf path
+// here, on purpose.
+app.post("/api/draft/refresh", async (req, res) => {
+  if (!API_KEY || !MIND_ID) {
+    res.status(500).json({
+      error: !API_KEY
+        ? "MINDS_BUILDER_API_KEY not configured on the server."
+        : "KITH_MIND_ID not configured on the server — find yours with `minds list --pretty`.",
+    });
+    return;
+  }
+  if (req.body?.confirm !== true) {
+    res.status(400).json({
+      error: "This spends real cognition. Resend with { confirm: true } to proceed.",
+    });
+    return;
+  }
+  const memberKey = req.body?.memberKey;
+  if (typeof memberKey !== "string" || !memberKey.trim()) {
+    res.status(400).json({ error: "Missing memberKey." });
+    return;
+  }
+
+  const watchlist = await readJson<Watchlist | null>(`${DATA}/watchlist.json`, null);
+  const member = watchlist?.watching.find((m) => m.key === memberKey);
+  if (!member) {
+    res.status(404).json({
+      error: "That member isn't on the current watchlist — run `npm run registry` again if this seems stale.",
+    });
+    return;
+  }
+
+  const headline = headlineFor(member);
+  const prompt =
+    `Draft a short, warm check-in message the creator could send to ${member.name}, a real member of this ` +
+    `community you've been watching. Here's why they're flagged: ${headline} Use their stated pronouns from ` +
+    `kith-watchlist if recorded, they/them otherwise. Keep it brief (2-4 sentences), personal, not corporate, ` +
+    `and not presuming to know exactly what's wrong — an invitation to talk, not a diagnosis. Reply with ONLY ` +
+    `the message text, nothing else — no preamble, no explanation, ready to copy and send as-is.`;
+
+  // Cost bookkeeping, not the point of this route — a send that actually
+  // goes through is real and paid-for regardless of whether this succeeds.
+  const before = await getCognitionBalance(API_KEY, MIND_ID).then((b) => b.cognition).catch(() => null);
+  const alias = freshAlias("kith-web-draft");
+  try {
+    const { sentAt, afterFingerprint } = await sendOnly(API_KEY, MIND_ID, alias, prompt);
+    res.json({ alias, sentAt, afterFingerprint, sentMessageText: prompt, before, memberName: member.name });
+  } catch (err) {
+    res.status(502).json({ error: `Draft request failed: ${(err as Error).message}` });
+  }
+});
+
+// Free — poll after /api/draft/refresh until { done: true }.
+app.post("/api/draft/status", async (req, res) => {
+  if (!API_KEY) {
+    res.status(500).json({ error: "MINDS_BUILDER_API_KEY not configured on the server." });
+    return;
+  }
+  const { alias, sentMessageText, afterFingerprint, sentAfter, before } = req.body ?? {};
+  if (typeof alias !== "string" || !alias.trim()) {
+    res.status(400).json({ error: "Missing alias." });
+    return;
+  }
+
+  let reply: Awaited<ReturnType<typeof findReply>>;
+  try {
+    reply = await findReply(API_KEY, alias.trim(), {
+      sentMessageText: typeof sentMessageText === "string" ? sentMessageText : undefined,
+      afterFingerprint: typeof afterFingerprint === "string" ? afterFingerprint : undefined,
+      sentAfter: typeof sentAfter === "string" ? sentAfter : undefined,
+    });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+    return;
+  }
+  if (!reply) {
+    res.json({ done: false });
+    return;
+  }
+
+  // The send already spent real cognition regardless of what happens below —
+  // a bookkeeping failure must never cost the caller the draft they already
+  // paid for.
+  if (MIND_ID && typeof before === "number") {
+    try {
+      const after = await getCognitionBalance(API_KEY, MIND_ID).catch(() => null);
+      if (after) {
+        const log = await cognitionLogStore.read<CognitionLogEntry[]>("cognition-log", []);
+        log.push({
+          at: new Date().toISOString(),
+          question: "draft check-in message",
+          before,
+          after: after.cognition,
+          spent: Math.max(0, before - after.cognition),
+        });
+        await cognitionLogStore.write("cognition-log", log);
+      }
+    } catch (err) {
+      console.error("Failed to update cognition log (draft still returned):", err);
+    }
+  }
+
+  res.json({ done: true, draft: reply.text, capturedAt: reply.createdAt });
 });
 
 // ── Beat B: fixed-alias live feed, restart marker ───────────────────────────

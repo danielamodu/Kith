@@ -176,13 +176,18 @@ export default function Setup() {
             // for a dedup check server-side, and the server-side sender-type
             // check alone already excludes our own sent message from being
             // mistaken for a reply. No need to re-upload the full payload
-            // on every one of up to 40 poll requests over ~2 minutes.
+            // on every poll request.
             sentMessageText: start.sentMessageText.slice(0, 300),
             afterFingerprint: start.afterFingerprint,
             sentAfter: start.sentAt,
             before: start.before,
           }),
-        { isMounted: () => mountedRef.current },
+        // 5s x 180 = 15 minutes of active checking. Real observed reply
+        // latency on this Mind has ranged 13s to 75+ minutes for a
+        // comparable send, so a timeout here is not evidence of failure —
+        // see the copy below and "Check again", which resumes against the
+        // same alias rather than sending a second time.
+        { isMounted: () => mountedRef.current, intervalMs: 5000, maxAttempts: 180 },
       );
       setPushResult({ text: status.text ?? "", createdAt: status.createdAt ?? "" });
       setPushSpent(status.spent ?? null);
@@ -192,9 +197,10 @@ export default function Setup() {
       if (err instanceof PollAbortedError) return; // navigated away — nothing to show
       if (err instanceof PollTimeoutError) {
         setPushError(
-          "No reply yet after 2 minutes of checking. Nothing indicates the send failed — this is most likely just " +
-            "slow, not broken. Hit \"Check again\" below, check `minds history` on your Mind, or copy the registry " +
-            "JSON above and push it with `npm run push`.",
+          "No reply yet after 15 minutes of checking. That's within the normal range we've seen for this Mind — " +
+            "nothing indicates the send failed. Hit \"Check again\" below without reloading this page (reloading " +
+            "loses track of this send — check `minds history` on your Mind directly if that happens), or copy " +
+            "the registry JSON above and push it with `npm run push`.",
         );
       } else {
         setPushError(
@@ -224,7 +230,7 @@ export default function Setup() {
         watchlist: buildResult.watchlist,
         confirm: true,
       });
-      toast("Sent. This can take a minute or two — Kith is actually reading it.");
+      toast("Sent. Real replies have taken anywhere from under a minute to well over an hour — this page will keep checking, just don't reload it.");
       setPushStart(start);
       setPushing(false);
       await waitForPush(start);
@@ -459,7 +465,7 @@ export default function Setup() {
                   <ShieldCheck size={19} />
                   <div>
                     <strong>This costs real cognition on your Mind.</strong>
-                    <span>A few units, roughly proportional to registry size — the same cost as running <code>npm run push</code> yourself. Nothing is sent until you confirm, and the reply can take a minute or two — your Mind is actually reading it, not just acknowledging receipt.</span>
+                    <span>A few units, roughly proportional to registry size — the same cost as running <code>npm run push</code> yourself. Nothing is sent until you confirm. Your Mind is actually reading it, not just acknowledging receipt — real replies have taken anywhere from under a minute to well over an hour, so stay on this page while it checks.</span>
                   </div>
                 </div>
                 <div className="wizard-actions">
@@ -489,8 +495,9 @@ export default function Setup() {
                 )}
                 {pushWaiting && (
                   <div className="step-result step-result--warn">
-                    <Loader2 size={16} className="spin" /> Sent — Kith is reading and storing it now. This has taken
-                    up to two minutes on a real Mind; no need to reload, this page is checking for you.
+                    <Loader2 size={16} className="spin" /> Sent — Kith is reading and storing it now. This page is
+                    checking for you; real replies have taken anywhere from under a minute to well over an hour, so
+                    don't reload — reloading loses track of this send.
                   </div>
                 )}
                 {pushResult && (

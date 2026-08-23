@@ -5,7 +5,8 @@
  *      node src/cli-registry.ts --store       (real backfill + live traffic, merged)
  * Writes: data/registry.json, data/briefing.json, data/watchlist.json
  */
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadExport } from "./ingest.ts";
 import { buildMemberStates } from "./members.ts";
@@ -17,6 +18,7 @@ import {
   buildWatchlist,
   estimateTokens,
 } from "./registry.ts";
+import { computeContinuity, applyContinuity, appendSnapshot, type WatchlistSnapshot } from "./continuity.ts";
 
 const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
@@ -46,9 +48,23 @@ const registry = buildRegistry(
   asOf,
 );
 const briefing = buildBriefing(community, composites, asOf);
-const watchlist = buildWatchlist(community, states, observations, asOf);
+const watchlistRaw = buildWatchlist(community, states, observations, asOf);
 
 const out = (name: string) => root(`data/${name}`);
+
+// Cycle-over-cycle continuity: read the history log of past watchlists
+// (self-hosted, single-tenant path only — see continuity.ts and
+// onboarding.ts's own comment on why the multi-tenant web wizard does not
+// do this), decorate this cycle's watchlist with each member's streak, then
+// append this cycle onto the log for next time.
+const historyPath = out("watchlist-history.json");
+const history: WatchlistSnapshot[] = existsSync(historyPath)
+  ? JSON.parse(await readFile(historyPath, "utf8"))
+  : [];
+const continuity = computeContinuity(history, watchlistRaw.watching, watchlistRaw.generatedAt);
+const watchlist = applyContinuity(watchlistRaw, continuity);
+const nextHistory = appendSnapshot(history, watchlistRaw);
+await writeFile(historyPath, JSON.stringify(nextHistory, null, 2), "utf8");
 
 await writeFile(out("registry.json"), JSON.stringify(registry, null, 2), "utf8");
 await writeFile(out("briefing.json"), JSON.stringify(briefing, null, 2), "utf8");

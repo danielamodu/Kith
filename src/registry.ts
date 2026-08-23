@@ -295,6 +295,13 @@ export type Watchlist = {
     ans: number;
     ansNew: number;
     n: number;
+    /**
+     * Cycle-over-cycle memory of this member's own presence on the
+     * watchlist — set by continuity.ts, not by buildWatchlist itself (this
+     * builder has no access to history, and stays pure/testable without it).
+     * Absent on a member's first cycle flagged.
+     */
+    continuity?: { firstFlaggedAt: string; cyclesFlagged: number };
   }>;
   signals: CommunitySignals;
   /**
