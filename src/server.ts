@@ -61,13 +61,13 @@ async function loadEnv(): Promise<Record<string, string>> {
 }
 
 const env = { ...(await loadEnv()), ...process.env };
-const API_KEY = env.MINDS_BUILDER_API_KEY;
-const MIND_ID = env.KITH_MIND_ID;
+const getApiKey = () => process.env.MINDS_BUILDER_API_KEY || env.MINDS_BUILDER_API_KEY;
+const getMindId = () => process.env.KITH_MIND_ID || env.KITH_MIND_ID;
 
-if (!API_KEY) {
+if (!getApiKey()) {
   console.error("MINDS_BUILDER_API_KEY is not set in .env — the live-answer route will fail.");
 }
-if (!MIND_ID) {
+if (!getMindId()) {
   // No fallback to a hardcoded Mind on purpose: this repo is meant to be run
   // by anyone against their own Mind, and silently defaulting to ours would
   // mean a fresh clone talks to (and spends the cognition of) a Mind that
@@ -236,9 +236,11 @@ const LIVE_PROMPT =
 // the Mind and spend real cognition, then still time out and report
 // "failed" on a send that had already succeeded.
 app.post("/api/live-answer/refresh", async (req, res) => {
-  if (!API_KEY || !MIND_ID) {
+  const apiKey = getApiKey();
+  const mindId = getMindId();
+  if (!apiKey || !mindId) {
     res.status(500).json({
-      error: !API_KEY
+      error: !apiKey
         ? "MINDS_BUILDER_API_KEY not configured on the server."
         : "KITH_MIND_ID not configured on the server — find yours with `minds list --pretty`.",
     });
@@ -253,10 +255,10 @@ app.post("/api/live-answer/refresh", async (req, res) => {
 
   // Cost bookkeeping, not the point of this route — a send that actually
   // goes through is real and paid-for regardless of whether this succeeds.
-  const before = await getCognitionBalance(API_KEY, MIND_ID).then((b) => b.cognition).catch(() => null);
+  const before = await getCognitionBalance(apiKey, mindId).then((b) => b.cognition).catch(() => null);
   const alias = freshAlias("kith-web-beata");
   try {
-    const { sentAt, afterFingerprint } = await sendOnly(API_KEY, MIND_ID, alias, LIVE_PROMPT);
+    const { sentAt, afterFingerprint } = await sendOnly(apiKey, mindId, alias, LIVE_PROMPT);
     res.json({ alias, sentAt, afterFingerprint, sentMessageText: LIVE_PROMPT, before });
   } catch (err) {
     res.status(502).json({ error: `Live query failed: ${(err as Error).message}` });
@@ -265,7 +267,9 @@ app.post("/api/live-answer/refresh", async (req, res) => {
 
 // Free — poll after /api/live-answer/refresh until { done: true }.
 app.post("/api/live-answer/status", async (req, res) => {
-  if (!API_KEY) {
+  const apiKey = getApiKey();
+  const mindId = getMindId();
+  if (!apiKey) {
     res.status(500).json({ error: "MINDS_BUILDER_API_KEY not configured on the server." });
     return;
   }
@@ -277,7 +281,7 @@ app.post("/api/live-answer/status", async (req, res) => {
 
   let reply: Awaited<ReturnType<typeof findReply>>;
   try {
-    reply = await findReply(API_KEY, alias.trim(), {
+    reply = await findReply(apiKey, alias.trim(), {
       sentMessageText: typeof sentMessageText === "string" ? sentMessageText : undefined,
       afterFingerprint: typeof afterFingerprint === "string" ? afterFingerprint : undefined,
       sentAfter: typeof sentAfter === "string" ? sentAfter : undefined,
@@ -315,9 +319,9 @@ app.post("/api/live-answer/status", async (req, res) => {
     console.error("Failed to persist live-answer (answer still returned):", err);
   }
 
-  if (MIND_ID && typeof before === "number") {
+  if (mindId && typeof before === "number") {
     try {
-      const after = await getCognitionBalance(API_KEY, MIND_ID).catch(() => null);
+      const after = await getCognitionBalance(apiKey, mindId).catch(() => null);
       if (after) {
         const log = await cognitionLogStore.read<CognitionLogEntry[]>("cognition-log", []);
         log.push({
