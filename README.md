@@ -123,12 +123,5 @@ docs/            architecture, self-hosting, and the full evidence trail
 - [`docs/evidence/`](docs/evidence) — dated, specific records of what was proven against the
   live Mind, including the times something broke and how it got fixed
 
-## Data
-
-The public demo runs on a disclosed synthetic community while real access stays pending
-owner consent — labelled as such wherever it's shown, never presented as real. Details in
-`docs/evidence/`.
-
----
 
 Built for Creative Minds Jam #1: Hong Kong — Moderation & Community Assistance track.
