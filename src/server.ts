@@ -16,7 +16,7 @@
  */
 import express from "express";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -659,7 +659,23 @@ app.get("/api/budget", async (_req, res) => {
 // page. Scoped to skip /api/* so an unmatched API route still 404s as JSON
 // instead of silently returning the whole HTML page.
 app.get(/^(?!\/api\/).*/, (_req, res) => {
-  res.sendFile(root("public/index.html"));
+  const indexPath = root("public/index.html");
+  if (existsSync(indexPath)) {
+    res.sendFile(indexPath, (err) => {
+      if (err && !res.headersSent) {
+        res.status(404).send("Frontend page not found.");
+      }
+    });
+  } else {
+    res.status(404).send("Frontend build not found — run `npm run web:build` first.");
+  }
+});
+
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("Server error:", err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: (err as Error)?.message || "Internal server error" });
+  }
 });
 
 // Vercel imports this module and calls the exported handler directly per

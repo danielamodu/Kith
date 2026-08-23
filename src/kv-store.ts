@@ -51,8 +51,12 @@ class FileStore implements SmallStore {
 
   async write(key: string, value: unknown): Promise<void> {
     const path = this.pathFor(key);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, JSON.stringify(value, null, 2), "utf8");
+    try {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, JSON.stringify(value, null, 2), "utf8");
+    } catch (err) {
+      console.warn(`FileStore write skipped for key '${key}': ${(err as Error).message}`);
+    }
   }
 }
 
