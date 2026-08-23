@@ -1,7 +1,7 @@
 {
-  "buildCommand": "npm run fixture && npm run registry && npm run web:build",
+  "buildCommand": "npm run fixture && npm run registry && npm run web:build && npx esbuild api/index.ts --platform=node --bundle --format=esm --outfile=api/index.js --external:express",
   "functions": {
-    "api/index.ts": {
+    "api/index.js": {
       "includeFiles": "{data,content,public}/**",
       "maxDuration": 60
     }
