@@ -20,6 +20,7 @@ import {
 } from "@/components/KithShell";
 
 type Baseline = { question?: string; answer?: string; source?: string; note?: string };
+type WatchData = { watching: WatchItem[]; quiet?: boolean; community?: string; generatedAt?: string };
 type PronounIssue = { member: string; pronounUsed: string; context: string };
 type LiveAnswer = { answer?: string; text?: string; capturedAt?: string; source?: string; pronounIssues?: PronounIssue[] };
 type LiveStart = { alias: string; sentAt: string; afterFingerprint?: string; sentMessageText: string; before: number | null };
@@ -35,13 +36,13 @@ type DraftStatus = { done: boolean; draft?: string; capturedAt?: string };
 // path, not just a claim in the copy below.
 const LIVE_PENDING_KEY = "kith-live-pending";
 
-const fallbackWatch = { watching: [{ member: "Maya", headline: "Her Tuesday rhythm has gone quiet.", signals: ["gap drift", "contribution"], lastSeen: "active 2 days ago" }, { member: "Jonah", headline: "A newcomer got a hello, then no thread back.", signals: ["newcomer", "follow-up"], lastSeen: "active yesterday" }] as WatchItem[], quiet: false };
+const fallbackWatch: WatchData = { watching: [{ member: "Maya", headline: "Her Tuesday rhythm has gone quiet.", signals: ["gap drift", "contribution"], lastSeen: "active 2 days ago" }, { member: "Jonah", headline: "A newcomer got a hello, then no thread back.", signals: ["newcomer", "follow-up"], lastSeen: "active yesterday" }], quiet: false };
 const fallbackBaseline: Baseline = { question: "Who in the community might need a little attention right now?", answer: "It may help to check in with members who have been less active recently.", source: "Same model. Memory disabled.", note: "A true answer, but one without a personal baseline." };
 const fallbackLive: LiveAnswer = { answer: "Maya has gone quiet relative to her own Tuesday rhythm. She also welcomed a newcomer last week, then stopped replying.", capturedAt: "cached example", source: "Kith — reading the community it remembers." };
 const fallbackBriefing: { cases: Briefing[] } = { cases: [{ headline: "Maya's rhythm is changing", member: "Maya", signals: ["gap drift", "contribution", "tone shift"], evidence: [{ timestamp: "Tue · 09:12", text: "Maya welcomed a new member into the thread.", source: "community memory" }, { timestamp: "Thu · 16:48", text: "Her usual follow-up did not arrive.", source: "personal baseline" }, { timestamp: "Today · 10:02", text: "No new contribution at her usual cadence.", source: "rhythm check" }] }] };
 
 export default function Demo() {
-  const [watch, setWatch] = useState(fallbackWatch);
+  const [watch, setWatch] = useState<WatchData>(fallbackWatch);
   const [baseline, setBaseline] = useState(fallbackBaseline);
   const [live, setLive] = useState(fallbackLive);
   const [briefing, setBriefing] = useState(fallbackBriefing);
@@ -111,6 +112,25 @@ export default function Demo() {
   const unsafe = pronounIssues.length > 0;
   const evidence = briefing.cases?.[0]?.evidence || [];
   const watchCount = watch.watching?.length || 0;
+
+  // Staleness: data older than 48 h (or fallback) gets a visible label.
+  // Kith's own philosophy is that time and continuity should be visible,
+  // not silently presented as current. This makes that explicit in the UI.
+  const isSynthetic = usingFallback || (watch.community ?? "").toLowerCase().includes("synthetic");
+  const capturedDate = useMemo(() => {
+    if (!watch.generatedAt) return null;
+    try {
+      const d = new Date(watch.generatedAt);
+      const ageMs = Date.now() - d.getTime();
+      const ageH = ageMs / 3_600_000;
+      if (ageH < 48) return null; // fresh enough — no label needed
+      return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    } catch { return null; }
+  }, [watch.generatedAt]);
+  const showDataPill = isSynthetic || capturedDate !== null;
+  const dataPillLabel = isSynthetic
+    ? `Synthetic fixture${watch.community ? ` · ${watch.community}` : ""}`
+    : `Stale · captured ${capturedDate}`;
 
   // Shared by a fresh ask and a "Check again" recovery after a poll
   // failure — resumes against the SAME alias/start rather than starting a
@@ -262,10 +282,10 @@ export default function Demo() {
 
   return <PageShell eyebrow="Live community mind · public demo" showBudget>
     <div className="container demo-page">
-      <div className="demo-heading"><div><SectionLabel tone="mint">Beat A · the memory reveal</SectionLabel><h1>What the Mind is <em>holding.</em></h1><p>Kith looks for changes in a person’s own rhythm—not a generic activity score.</p></div><div className="demo-heading-meta"><div className="live-status"><PresencePulse tone="mint" label="live mind online" /><span>Mind online</span></div>{usingFallback && <span className="fixture-note">illustrative fixture</span>}</div></div>
+      <div className="demo-heading"><div><SectionLabel tone="mint">Beat A · the memory reveal</SectionLabel><h1>What the Mind is <em>holding.</em></h1><p>Kith looks for changes in a person’s own rhythm—not a generic activity score.</p></div><div className="demo-heading-meta"><div className="live-status"><PresencePulse tone="mint" label="live mind online" /><span>Mind online</span></div>{showDataPill && <DataFreshnessPill label={dataPillLabel} />}</div></div>
 
       <section className="dashboard-grid">
-        <Surface className="watchlist-panel" accent="mint"><div className="panel-heading"><div><span className="panel-kicker"><UsersRound size={14} /> watchlist</span><h2>People to hold lightly.</h2></div><span className="count-bubble">{watchCount}</span></div>{watchCount ? <div className="watch-list">{watch.watching.map((item, index) => <WatchCard
+        <Surface className="watchlist-panel" accent="mint"><div className="panel-heading"><div><span className="panel-kicker"><UsersRound size={14} /> watchlist{showDataPill && <DataFreshnessPill label={dataPillLabel} inline />}</span><h2>People to hold lightly.</h2></div><span className="count-bubble">{watchCount}</span></div>{watchCount ? <div className="watch-list">{watch.watching.map((item, index) => <WatchCard
           key={`${item.key || item.member || item.name}-${index}`}
           item={item}
           index={index}
@@ -335,3 +355,15 @@ function AnswerCard({ kind, source, answer, foot, unsafe = false, pronounIssues 
 }
 
 function ArrowRightIcon() { return <RefreshCw size={15} />; }
+
+function DataFreshnessPill({ label, inline = false }: { label: string; inline?: boolean }) {
+  return (
+    <span
+      className={inline ? "data-freshness-pill data-freshness-pill--inline" : "data-freshness-pill"}
+      title="This dataset is illustrative or stale — it does not reflect a live community state right now."
+    >
+      <Database size={11} />
+      {label}
+    </span>
+  );
+}
