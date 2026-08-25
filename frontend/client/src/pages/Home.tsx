@@ -21,7 +21,7 @@ export default function Home() {
           <div className="hero-float hero-float--top"><span className="float-kicker">new thread</span><b>someone arrived</b><span className="float-line" /></div>
           <div className="hero-float hero-float--bottom"><span className="float-dot" /> warm follow-up <ArrowUpRight size={14} /></div>
         </div>
-        <div className="hero-scroll"><ArrowDown size={14} /><span>scroll to meet the Mind</span></div>
+        </div>
       </section>
 
       <section className="section container problem-section">
