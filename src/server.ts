@@ -51,6 +51,7 @@ import {
   saveGuildConfig,
   getGuildConfig,
   listGuilds,
+  appendGuildMessages,
   type GuildConfig,
 } from "./tenant-store.ts";
 import { runCycle } from "./cron-poll.ts";
@@ -710,7 +711,7 @@ app.post("/api/setup/check-channel", async (req, res) => {
 });
 
 app.post("/api/setup/build", async (req, res) => {
-  const { channelId, communityName, sinceDays } = req.body ?? {};
+  const { channelId, communityName, sinceDays, guildId } = req.body ?? {};
   const token = resolveToken(req.body?.token);
   if (typeof channelId !== "string" || !channelId.trim()) {
     res.status(400).json({ error: "Missing channel id." });
@@ -728,6 +729,33 @@ app.post("/api/setup/build", async (req, res) => {
       typeof communityName === "string" && communityName.trim() ? communityName.trim() : "your community",
       { sinceDays: days },
     );
+    // Persist into the hosted store when this build belongs to a connected
+    // guild — the wizard's in-memory payloads die with the response, and
+    // without this the nightly cycle starts from an empty room ("no
+    // messages stored yet"). Found live: first real walkthrough of the
+    // hosted product.
+    if (typeof guildId === "string" && guildId.trim()) {
+      const stored = community.messages.map((m) => ({
+        id: m.id,
+        ts: m.ts.toISOString(),
+        authorId: m.authorId,
+        authorName: m.authorName,
+        text: m.text,
+        replyToId: m.replyToId,
+        chatId: channelId.trim(),
+        source: "discord" as const,
+      }));
+      const events = community.events.map((e) => ({
+        ts: e.ts.toISOString(),
+        actorId: e.actorId,
+        actorName: e.actorName,
+        action: e.action,
+        kind: e.kind,
+        chatId: channelId.trim(),
+        source: "discord" as const,
+      }));
+      await appendGuildMessages(guildId.trim(), stored, events);
+    }
     const payloads = buildPayloads(community);
     res.json({ ...payloads, stats });
   } catch (err) {

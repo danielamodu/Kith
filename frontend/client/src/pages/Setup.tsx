@@ -183,6 +183,7 @@ export default function Setup() {
       const result = await api.postOrThrow<BuildResult>("/api/setup/build", {
         token,
         channelId,
+        guildId: guildId || undefined,
         communityName: communityName || undefined,
         sinceDays,
       });
