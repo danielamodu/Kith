@@ -610,39 +610,6 @@ export default function Setup() {
                     </span>
                   </div>
                 )}
-                {pushResult && cycleRegistered !== null && (
-                  <Surface className="wizard-step" accent="mint" style={{ marginTop: "20px" }}>
-                    <div className="wizard-step-body" style={{ paddingTop: "8px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
-                        <CheckCircle2 size={20} />
-                        <h2 style={{ margin: 0, fontSize: "1.15rem" }}>You're set. Kith is watching.</h2>
-                      </div>
-                      {cycleRegistered ? (
-                        <>
-                          <p style={{ margin: "0 0 10px" }}>
-                            From here, nothing runs on your computer. Every day Kith quietly reads what's new in{" "}
-                            <b>{guildName ?? "your server"}</b>, updates its memory inside your Mind, and — only when
-                            someone needs you — posts to{" "}
-                            <b>{digestChannelId.trim() ? "your digest channel" : "the channel you chose"}{" "}
-                            {digestChannelId.trim() ? "" : "(you didn't set one — add it above and reconnect to get digests)"}</b>.
-                          </p>
-                          <p style={{ margin: "0 0 10px" }}>Most days it will say nothing. That's the product working: silence means nobody is quietly slipping away.</p>
-                          <p style={{ margin: 0 }}>
-                            Want to talk to the memory itself? Open your Mind in the Minds app and ask{" "}
-                            <em>&ldquo;who should I check in on, and why?&rdquo;</em> — it answers from everything it now
-                            remembers, with receipts.
-                          </p>
-                        </>
-                      ) : (
-                        <p style={{ margin: 0 }}>
-                          The push succeeded, but the automatic daily cycle couldn't be registered — likely a
-                          temporary server error. Your memory is in your Mind either way; reconnect this server
-                          (walk the wizard again) to switch on the automatic cycle.
-                        </p>
-                      )}
-                    </div>
-                  </Surface>
-                )}
                 {pushError && (
                   <div className="step-result step-result--error">
                     <AlertTriangle size={16} />
@@ -662,6 +629,60 @@ export default function Setup() {
               </div>
             )}
           </Surface>
+
+          {/* Step 5 — what happens now. Only real once the push has landed
+              and the guild registration attempt has resolved. */}
+          {pushResult && cycleRegistered !== null && (
+            <Surface className="wizard-step" accent="mint">
+              <StepHead
+                num={5}
+                done={cycleRegistered}
+                title={cycleRegistered ? "Kith is watching." : "Almost — one thing left."}
+                desc={
+                  cycleRegistered
+                    ? "The setup is done. Everything from here is automatic — you can close this tab."
+                    : "Your memory is stored, but the automatic cycle couldn't be registered."
+                }
+              />
+              <div className="wizard-step-body">
+                {cycleRegistered ? (
+                  <>
+                    <div className="build-summary">
+                      <div className="build-stat"><b>daily</b><span>memory refresh</span></div>
+                      <div className="build-stat"><b>{digestChannelId.trim() ? "digest on" : "digest off"}</b><span>{digestChannelId.trim() ? "posted when it matters" : "no digest channel set"}</span></div>
+                      <div className="build-stat"><b>0</b><span>terminals to keep open</span></div>
+                    </div>
+                    <p style={{ margin: "0 0 10px" }}>
+                      <b>Every day, automatically:</b> Kith reads what's new in{" "}
+                      <b>{guildName ?? "your server"}</b>, rebuilds each member's baseline, and updates the
+                      memory inside your Mind. You do nothing.
+                    </p>
+                    <p style={{ margin: "0 0 10px" }}>
+                      <b>When someone needs you</b> — a regular fading away, a newcomer ignored for days —
+                      Kith posts to <b>{digestChannelId.trim() ? "your digest channel" : "your digest channel (set one in step 2 and reconnect to switch this on)"}</b>:
+                      who, what changed, and the receipts behind it.
+                    </p>
+                    <p style={{ margin: "0 0 10px" }}>
+                      <b>Most days it says nothing.</b> That's not a bug — silence means nobody is quietly
+                      slipping away.
+                    </p>
+                    <p style={{ margin: 0 }}>
+                      <b>Want to talk to the memory?</b> Open your Mind in the Minds app and ask{" "}
+                      <em>&ldquo;who should I check in on, and why?&rdquo;</em> — it answers from everything it
+                      now remembers, with receipts.
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ margin: 0 }}>
+                    The push succeeded — your Mind holds the memory. But registering this server for the
+                    automatic daily cycle failed (usually a temporary server error). To switch it on, walk
+                    this wizard again from step 1; it's fast now that Discord is already connected. Until then,
+                    nothing runs automatically.
+                  </p>
+                )}
+              </div>
+            </Surface>
+          )}
         </div>
 
         <div className="how-cta" style={{ marginTop: "60px" }}>
@@ -682,7 +703,7 @@ function StepHead({ num, done, title, desc }: { num: number; done: boolean; titl
   return (
     <div className={`wizard-step-head ${done ? "wizard-step-done" : ""}`}>
       <div>
-        <span className="panel-kicker">step {num} of 4</span>
+        <span className="panel-kicker">step {num} of 5</span>
         <h2>{title}</h2>
         <p>{desc}</p>
       </div>
