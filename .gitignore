@@ -24,3 +24,5 @@ npm-debug.log*
 # OS
 Thumbs.db
 .DS_Store
+.vercel
+.env*

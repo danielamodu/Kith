@@ -82,6 +82,9 @@ export default function Setup() {
   const [pushResult, setPushResult] = useState<{ text: string; createdAt: string } | null>(null);
   const [pushError, setPushError] = useState<string | null>(null);
   const [pushSpent, setPushSpent] = useState<number | null>(null);
+  // null = not attempted yet; true/false = whether the guild registered for
+  // the hosted cycle after the push landed
+  const [cycleRegistered, setCycleRegistered] = useState<boolean | null>(null);
   // Kept so a failed *poll* (send already went through) can be resumed
   // with "Check again" instead of the user hitting "push" a second time
   // and creating an entirely separate conversation on their Mind.
@@ -238,8 +241,10 @@ export default function Setup() {
           apiKey,
           mindId,
         });
+        setCycleRegistered(true);
         toast("Stored — and the nightly cycle is now live. You can close this tab.");
       } catch (err) {
+        setCycleRegistered(false);
         toast(`Stored, but the automatic cycle couldn't be registered: ${err instanceof Error ? err.message : "unknown error"}`);
       }
       setPushStart(null);
@@ -500,8 +505,7 @@ export default function Setup() {
                   </div>
                 </div>
                 <p className="field-hint">
-                  Bounded on purpose so this finishes inside one request. For a deeper, full-history backfill with no
-                  time limit, run <code>npm run setup</code> locally instead.
+                  Bounded on purpose so this finishes inside one request — 60 days is plenty for a baseline.
                 </p>
                 <div className="wizard-actions">
                   <TactileButton variant="dark" onClick={build} disabled={building}>
@@ -559,7 +563,7 @@ export default function Setup() {
                   <ShieldCheck size={19} />
                   <div>
                     <strong>This costs real cognition on your Mind.</strong>
-                    <span>A few units, roughly proportional to registry size — the same cost as running <code>npm run push</code> yourself. Nothing is sent until you confirm. Your Mind is actually reading it, not just acknowledging receipt — real replies have taken anywhere from under a minute to well over an hour, so stay on this page while it checks.</span>
+                    <span>A few units, roughly proportional to registry size. Nothing is sent until you confirm. Your Mind is actually reading it, not just acknowledging receipt — real replies have taken anywhere from under a minute to well over an hour, so stay on this page while it checks.</span>
                   </div>
                 </div>
                 <div className="wizard-actions">
@@ -602,6 +606,39 @@ export default function Setup() {
                       replied: <em>&ldquo;{pushResult.text.slice(0, 220)}{pushResult.text.length > 220 ? "…" : ""}&rdquo;</em>
                     </span>
                   </div>
+                )}
+                {pushResult && cycleRegistered !== null && (
+                  <Surface className="wizard-step" accent="mint" style={{ marginTop: "20px" }}>
+                    <div className="wizard-step-body" style={{ paddingTop: "8px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+                        <CheckCircle2 size={20} />
+                        <h2 style={{ margin: 0, fontSize: "1.15rem" }}>You're set. Kith is watching.</h2>
+                      </div>
+                      {cycleRegistered ? (
+                        <>
+                          <p style={{ margin: "0 0 10px" }}>
+                            From here, nothing runs on your computer. Every day Kith quietly reads what's new in{" "}
+                            <b>{guildName ?? "your server"}</b>, updates its memory inside your Mind, and — only when
+                            someone needs you — posts to{" "}
+                            <b>{digestChannelId.trim() ? "your digest channel" : "the channel you chose"}{" "}
+                            {digestChannelId.trim() ? "" : "(you didn't set one — add it above and reconnect to get digests)"}</b>.
+                          </p>
+                          <p style={{ margin: "0 0 10px" }}>Most days it will say nothing. That's the product working: silence means nobody is quietly slipping away.</p>
+                          <p style={{ margin: 0 }}>
+                            Want to talk to the memory itself? Open your Mind in the Minds app and ask{" "}
+                            <em>&ldquo;who should I check in on, and why?&rdquo;</em> — it answers from everything it now
+                            remembers, with receipts.
+                          </p>
+                        </>
+                      ) : (
+                        <p style={{ margin: 0 }}>
+                          The push succeeded, but the automatic daily cycle couldn't be registered — likely a
+                          temporary server error. Your memory is in your Mind either way; reconnect this server
+                          (walk the wizard again) to switch on the automatic cycle.
+                        </p>
+                      )}
+                    </div>
+                  </Surface>
                 )}
                 {pushError && (
                   <div className="step-result step-result--error">
