@@ -7,6 +7,19 @@ Built on [Minds by Animoca Brands](https://hellominds.ai).
 
 ---
 
+## The 30-second version
+
+Past a few hundred members, a creator can't read everything anymore — and the quiet
+erosion is invisible until the members are already gone: a regular fading away, a
+newcomer's first message sitting unanswered. Kith is a Mind skill that remembers every
+member's *own* baseline — their rhythm, their message length, who they help — and runs
+itself: a daily cycle reads what's new in the community, updates the memory inside the
+creator's Mind, and posts a digest only when someone actually needs attention. Every
+signal is measured against that specific person's history, never a global threshold.
+Most days Kith says nothing. Silence means nobody is slipping away.
+
+---
+
 ## What it does
 
 Past a few hundred members, a creator loses the ability to read everything. They still care
@@ -67,13 +80,13 @@ a member who posts monthly going silent for nine days is nothing. That compariso
 impossible without months of per-member history — delete the memory and Kith doesn't
 degrade, it goes blind.
 
-**The proof, side by side, same question, same model** — full dated records in
-[`docs/evidence/`](docs/evidence), including the runs that broke:
+**The proof, side by side — real community, same question, same minute, two Minds.**
+Full record in [`docs/evidence/2026-08-25-real-side-by-side.md`](docs/evidence/2026-08-25-real-side-by-side.md):
 
 | | Response |
 |---|---|
-| **Memory disabled** | Generic. Suggests checking engagement metrics or asking the community. |
-| **Kith** | Names the member, gives the reasoning, and cites the history it drew on with real timestamps. |
+| **Memory disabled** | *"Honest answer: I don't actually know who's in your community right now… I shouldn't make up names or guess based on patterns… this is a limitation, not an answer."* |
+| **Kith** | *"uy scutty is the one to reach out to. Usually posts every couple of hours; has been gone nearly five days… gap roughly 50 of their own cycles against a rhythm of ~2.3 hours… this is the first cycle they've been flagged."* — and it refused to judge a second member whose baseline couldn't ground the ratio. |
 
 ---
 
@@ -143,3 +156,7 @@ docs/            architecture, self-hosting, hosted deployment, and the full evi
 
 
 Built for Creative Minds Jam #1: Hong Kong — Moderation & Community Assistance track.
+
+**The track's contrarian take:** moderation acts after behavior crosses a line. Kith
+notices the conditions that make moderation necessary — the burnout, the neglect, the
+quiet departures — while everything is still fixable with a single human message.
