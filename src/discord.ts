@@ -243,3 +243,60 @@ export async function walkHistory(
 
   return { pages, oldest, deadlineHit };
 }
+
+/**
+ * Page *forward* through a channel from a known message id — the live-poll
+ * complement to walkHistory's backwards walk. Discord returns `after` pages
+ * oldest-first, so each page's last id is the next cursor. Used by the cron
+ * route to collect only what arrived since the previous cycle: a healthy
+ * cadence is one or two pages per guild, not a re-walk of history.
+ */
+export async function walkForward(
+  token: string,
+  channelId: string,
+  afterId: string,
+  onPage: (messages: StoredMessage[], events: StoredEvent[]) => Promise<void>,
+  opts: { maxPages?: number; deadlineMs?: number } = {},
+): Promise<{ pages: number; newest?: string; deadlineHit?: boolean }> {
+  let after = afterId;
+  let pages = 0;
+  let newest: string | undefined;
+  const maxPages = opts.maxPages ?? 50;
+  const deadline = opts.deadlineMs !== undefined ? Date.now() + opts.deadlineMs : undefined;
+  let deadlineHit = false;
+
+  while (pages < maxPages) {
+    if (deadline !== undefined && Date.now() >= deadline) {
+      deadlineHit = true;
+      break;
+    }
+    let page: DiscordMessage[];
+    try {
+      page = await fetchPage(token, channelId, { after, limit: 100, deadline });
+    } catch (err) {
+      if (err instanceof DeadlineExceededError) {
+        deadlineHit = true;
+        break;
+      }
+      throw err;
+    }
+    if (page.length === 0) break;
+
+    const messages: StoredMessage[] = [];
+    const events: StoredEvent[] = [];
+    for (const m of page) {
+      const n = normalise(m);
+      if (n.message) messages.push(n.message);
+      if (n.event) events.push(n.event);
+    }
+    await onPage(messages, events);
+
+    pages++;
+    after = page[page.length - 1]!.id;
+    newest = after;
+
+    if (page.length < 100) break; // caught up to the present
+  }
+
+  return { pages, newest, deadlineHit };
+}

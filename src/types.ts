@@ -111,8 +111,16 @@ export type MemberState = {
 
   /** median message length in characters — this person's normal */
   medianLength: number;
+  /** median absolute deviation of their lengths — how much their own length varies */
+  lengthMad: number;
   /** median length of their most recent messages, for comparison */
   recentMedianLength: number;
+  /**
+   * median length of the window BEFORE the recent one, or 0 if there is no
+   * such window. D3 requires the taper to hold across both windows: burnout
+   * ramps over days, while a single burst of short replies is just a day.
+   */
+  priorRecentMedianLength: number;
 
   /** replies this member sent that answered someone else's question */
   answersGiven: number;

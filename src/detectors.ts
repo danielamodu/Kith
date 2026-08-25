@@ -14,6 +14,20 @@ import type { Community, MemberState, Message } from "./types.ts";
 
 const HOUR = 1000 * 60 * 60;
 
+/**
+ * Human units, because "0.0 days" is how a five-minute reply norm displays
+ * when you insist on measuring the world in days — and a baseline that reads
+ * as zero is a baseline nobody can cite.
+ */
+const fmtDuration = (h: number) =>
+  h < 1
+    ? `${Math.max(1, Math.round(h * 60))} min`
+    : h < 48
+      ? `${Math.round(h)} h`
+      : `${(h / 24).toFixed(1)} days`;
+
+const fmtDays = fmtDuration;
+
 export type Evidence = { at: Date; fact: string };
 
 export type Observation = {
@@ -63,8 +77,35 @@ export type Thresholds = {
   minRhythmHours: number;
   /** Recent messages this fraction of their norm or shorter counts as tapering. */
   toneShrink: number;
+  /**
+   * The window BEFORE the recent one must also sit below this fraction of
+   * their norm. Burnout ramps over days; a single burst of short replies is a
+   * bad afternoon, not a signal. Requiring both windows is what separates them.
+   */
+  tonePriorShrink: number;
+  /**
+   * Robust-outlier guard for length, in MADs below their own norm — mirrors
+   * gapMads. A drop their ordinary day-to-day variation already explains is
+   * not a shift at all.
+   */
+  toneMads: number;
   /** A newcomer's first post is "ignored" past this multiple of the community norm. */
   newcomerPatience: number;
+  /**
+   * Floor on the patience window, in hours. In a firehose community the reply
+   * norm is minutes, so patience×norm collapses to "a few minutes" — every
+   * greeting older than lunch would flag forever at confidence 1.0. Found live:
+   * a 195-member server with a minute-scale norm flagged 44 people at once.
+   * "Ignored" has to mean something no matter how fast the room talks.
+   */
+  newcomerPatienceFloorH: number;
+  /**
+   * A member whose entire active life fits inside this span did not drift —
+   * they tried the community and left. Churn is sad but it is not gap-drift:
+   * drift is a *rhythm* breaking, and a weekend visitor never had one. Found
+   * live: burst posters with 986× ratios drowning out genuine regulars.
+   */
+  minActiveSpanDays: number;
   /** A contributor must score at least this fraction of the top score to surface. */
   contributionFloor: number;
 };
@@ -75,11 +116,13 @@ export const DEFAULT_THRESHOLDS: Thresholds = {
   gapMads: 3,
   minRhythmHours: 0.5,
   toneShrink: 0.6,
+  tonePriorShrink: 0.8,
+  toneMads: 2,
   newcomerPatience: 3,
+  newcomerPatienceFloorH: 48,
+  minActiveSpanDays: 7,
   contributionFloor: 0.4,
 };
-
-const fmtDays = (h: number) => `${(h / 24).toFixed(1)} days`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // D1 · Contribution — who is holding this place together
@@ -143,13 +186,16 @@ export function d2GapDrift(
   const out: Observation[] = [];
 
   for (const s of states.values()) {
-    // A gap is a question, never a conclusion — and these three guards are
+    // A gap is a question, never a conclusion — and these guards are
     // where most false positives die.
     if (s.messageCount < t.minObservations) continue; // unreliable baseline
     if (s.saidFarewell) continue; // they left on purpose, that isn't drift
     // Below minRhythmHours the ratio's denominator is too small for the
     // ratio to mean anything — see the field's own comment on Thresholds.
     if (s.medianGapHours < t.minRhythmHours) continue;
+    // Churn, not drift: someone active for a weekend and then gone never had
+    // a rhythm to break. Their 900× ratio is arithmetic, not a signal.
+    if (s.activeSpanDays < t.minActiveSpanDays) continue;
 
     const ratio = s.currentGapHours / s.medianGapHours;
     const madGuard = s.medianGapHours + t.gapMads * s.gapMadHours;
@@ -186,6 +232,14 @@ export function d2GapDrift(
  * The weakest signal and the most likely to produce a confidently wrong, faintly
  * creepy claim about a person. It NEVER fires alone — `compose()` will not emit
  * a tone-shift observation unless another detector already fired on that member.
+ *
+ * Three gates must all pass before it speaks:
+ *   1. Shrink — the most recent window sits far below their norm.
+ *   2. Persistence — the window before that is shortened too. Burnout ramps;
+ *      one burst of short replies is a Tuesday.
+ *   3. Robust outlier — the drop exceeds what their ordinary length variation
+ *      explains (MADs below their own norm), mirroring the gapMads guard in D2.
+ * If persistence cannot be established (no prior window), it stays quiet.
  */
 export function d3ToneShift(
   states: Map<string, MemberState>,
@@ -196,8 +250,17 @@ export function d3ToneShift(
     if (s.messageCount < t.minObservations) continue;
     if (s.medianLength <= 0) continue;
 
+    // 1 · shrink
     const shrink = s.recentMedianLength / s.medianLength;
     if (shrink > t.toneShrink) continue;
+
+    // 2 · persistence — no prior window means we cannot prove a trend; stay quiet.
+    if (!(s.priorRecentMedianLength > 0)) continue;
+    const priorShrink = s.priorRecentMedianLength / s.medianLength;
+    if (priorShrink > t.tonePriorShrink) continue;
+
+    // 3 · robust outlier
+    if (s.medianLength - s.recentMedianLength < t.toneMads * s.lengthMad) continue;
 
     out.push({
       memberId: s.id,
@@ -205,13 +268,18 @@ export function d3ToneShift(
       kind: "tone-shift",
       confidence: Math.min(1, (t.toneShrink - shrink) / t.toneShrink),
       claim:
-        `${s.name}'s last few messages were much shorter than usual — ` +
-        `about ${Math.round(s.recentMedianLength)} characters against their norm of ${Math.round(s.medianLength)}.`,
+        `${s.name}'s last ten or so messages have been much shorter than usual — ` +
+        `about ${Math.round(s.recentMedianLength)} characters against their norm of ${Math.round(s.medianLength)}, ` +
+        `and the window before that was already shortened (${Math.round(s.priorRecentMedianLength)} chars).`,
       evidence: [
         { at: s.lastSeen, fact: `recent messages median ${Math.round(s.recentMedianLength)} chars` },
+        {
+          at: s.lastSeen,
+          fact: `the five before those median ${Math.round(s.priorRecentMedianLength)} chars — the taper is sustained`,
+        },
         { at: s.firstSeen, fact: `personal norm ${Math.round(s.medianLength)} chars over ${s.messageCount} messages` },
       ],
-      baseline: `${Math.round(s.medianLength)} chars is normal for this person`,
+      baseline: `${Math.round(s.medianLength)} chars ± ${Math.round(s.lengthMad)} is normal for this person`,
     });
   }
   return out;
@@ -265,7 +333,9 @@ export function d4UnansweredNewcomers(
   }
 
   const out: Observation[] = [];
-  const patience = normHours * t.newcomerPatience;
+  // The floor keeps "ignored" meaningful in firehose communities where the
+  // reply norm is minutes — see newcomerPatienceFloorH.
+  const patience = Math.max(normHours * t.newcomerPatience, t.newcomerPatienceFloorH);
 
   for (const s of states.values()) {
     // "newcomer" = arrived recently relative to the community's own span
@@ -333,11 +403,21 @@ export function compose(all: Observation[]): Composite[] {
   // single fact they can act on in one sitting.
   const newcomers = all.filter((o) => o.kind === "unanswered-newcomer");
   if (newcomers.length > 0) {
-    const names = newcomers.map((n) => n.memberName);
+    // A wall of 44 names is not readable, and an unreadable alert is an
+    // ignored alert. Show the longest-waiting few; the parts carry the rest.
+    const MAX_NAMES = 6;
+    const byWait = [...newcomers].sort(
+      (a, b) => a.evidence[0]!.at.getTime() - b.evidence[0]!.at.getTime(),
+    );
+    const names = byWait.map((n) => n.memberName);
+    const shown = names.slice(0, MAX_NAMES);
+    const others = names.length - shown.length;
     const list =
-      names.length === 1
-        ? names[0]!
-        : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+      others > 0
+        ? `${shown.join(", ")}, and ${others} others`
+        : names.length === 1
+          ? names[0]!
+          : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
     out.push({
       memberId: newcomers.map((n) => n.memberId).join(","),
       memberName: list,

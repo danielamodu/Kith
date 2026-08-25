@@ -19,10 +19,11 @@ Kith sits in the community and remembers every member over months. It doesn't mo
 it doesn't punish. It notices, and it tells the creator:
 
 > *"Maya has answered 31 newcomers' questions since June — more than anyone, including your
-> mods. She hasn't posted in 9 days, and her last three messages were much shorter than her
-> baseline. I think she's burning out. I'd reach out personally rather than in channel."*
+> mods. She hasn't posted in 9 days, and her messages have been getting shorter for two
+> weeks. I think she's burning out. I'd reach out personally rather than in channel."*
 
-The creator acts. Kith perceives.
+*(Synthetic example, generated from Kith's fixture community — no real person's data is
+shown anywhere in this README. The creator acts. Kith perceives.)*
 
 ---
 
@@ -44,6 +45,20 @@ reason over — see **Run it yourself**, below, for getting your own history in.
 
 ---
 
+## Or use it hosted — no terminal
+
+The web wizard is the creator-facing product: **invite the bot, pick a channel, build the
+memory, push to your Mind.** Four steps, no developer portal, no Node, no `.env`. After the
+push, a nightly cycle keeps the memory fresh and posts a digest to a private channel only
+when something needs you — most days it says nothing, which is the product working.
+
+Operators deploy their own instance in minutes: see
+[`docs/hosted-deployment.md`](docs/hosted-deployment.md) for the environment, the cron, and
+the trust model (creator keys encrypted at rest; message data transits the deployment,
+cognition stays in each creator's Mind).
+
+---
+
 ## Why it has to remember, not just look
 
 Every signal Kith reports is measured against **that person's own baseline**, never a global
@@ -52,7 +67,8 @@ a member who posts monthly going silent for nine days is nothing. That compariso
 impossible without months of per-member history — delete the memory and Kith doesn't
 degrade, it goes blind.
 
-**The proof, side by side, same question, same model:**
+**The proof, side by side, same question, same model** — full dated records in
+[`docs/evidence/`](docs/evidence), including the runs that broke:
 
 | | Response |
 |---|---|
@@ -69,6 +85,8 @@ degrade, it goes blind.
   creator's attention. Most days, the correct output is nothing.
 - **A gap is a question, not a conclusion.** Kith proposes categories for a silence; it never
   asserts a cause.
+- **Trends, not moments.** A taper must hold across two windows and fall outside the
+  person's own variation before it counts — one bad afternoon is not a signal.
 - **Cite or stay quiet.** Every claim is backed by a specific value and a timestamp. A claim
   it can't cite is a claim it doesn't make.
 - **Never guess a pronoun.** Kith reads the registry's `pronouns` field and defaults to
@@ -90,7 +108,7 @@ npm run fixture      # or bring your own community's history
 npm run registry      # build the payloads your Mind reads
 npm run push          # push the registry into your Mind's memory
 npm run web           # the dashboard, at http://localhost:3131
-npm test               # 29 tests
+npm test               # the full regression suite
 ```
 
 For your own Discord or Telegram community instead of the synthetic fixture, `npm run setup`
@@ -105,12 +123,12 @@ Deployable straight to Vercel: `vercel.json` handles the build and routing; set
 ## Repository
 
 ```
-src/            perception layer, Minds integration, the web backend — see docs/architecture.md
+src/             perception layer, Minds integration, the web backend — see docs/architecture.md
 frontend/        the web dashboard's source (React/Vite)
 public/          built dashboard output, served by src/server.ts
 api/             Vercel serverless entry point
 content/         hand-authored UI copy tracked in git
-docs/            architecture, self-hosting, and the full evidence trail
+docs/            architecture, self-hosting, hosted deployment, and the full evidence trail
 ```
 
 ## Documentation

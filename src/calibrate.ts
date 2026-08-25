@@ -20,13 +20,24 @@ import { fileURLToPath } from "node:url";
 import { loadExport } from "./ingest.ts";
 import { buildMemberStates } from "./members.ts";
 import { runAll, DEFAULT_THRESHOLDS, type Thresholds } from "./detectors.ts";
+import { MessageStore } from "./store.ts";
 import type { Community, MemberState } from "./types.ts";
 
-const path =
-  process.argv[2] ??
-  fileURLToPath(new URL("../data/dev-export.json", import.meta.url));
+const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
-const community = await loadExport(path);
+// --store sweeps against the accumulated real-community store (Discord backfill
+// + live); otherwise a single export file, which defaults to the fixture.
+const useStore = process.argv.includes("--store");
+const path =
+  process.argv.find((a) => !a.startsWith("--") && a.endsWith(".json")) ??
+  root("data/dev-export.json");
+
+const community = useStore
+  ? await new MessageStore(root("data/store.jsonl"), root("data/store-state.json")).toCommunity(
+      (await new MessageStore(root("data/store.jsonl"), root("data/store-state.json")).readState())
+        .chatTitle ?? "community",
+    )
+  : await loadExport(path);
 const states = buildMemberStates(community);
 const asOf = community.to;
 
@@ -102,7 +113,11 @@ sweep("minObservations — below this, no baseline is trustworthy", "minObservat
 sweep("gapRatio — multiples of their OWN rhythm before silence counts", "gapRatio", [1.5, 2, 3, 5, 8, 15, 30]);
 sweep("gapMads — robust outlier guard, in MADs above their median", "gapMads", [0, 1, 2, 3, 5, 10]);
 sweep("toneShrink — recent length as a fraction of their norm", "toneShrink", [0.3, 0.4, 0.5, 0.6, 0.75, 0.9]);
+sweep("tonePriorShrink — how shortened the PRIOR window must also be", "tonePriorShrink", [0.5, 0.65, 0.8, 0.9, 1.01]);
+sweep("toneMads — length-drop robust outlier guard, in MADs below their norm", "toneMads", [0, 1, 2, 3, 5]);
 sweep("newcomerPatience — multiples of the community reply norm", "newcomerPatience", [1, 2, 3, 6, 12, 48]);
+sweep("newcomerPatienceFloorH — floor on the patience window, in hours", "newcomerPatienceFloorH", [0, 12, 24, 48, 96, 168]);
+sweep("minActiveSpanDays — history required before silence counts as drift", "minActiveSpanDays", [0, 3, 7, 14, 30]);
 sweep("contributionFloor — fraction of top score needed to surface", "contributionFloor", [0.1, 0.25, 0.4, 0.6, 0.8]);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,28 +133,52 @@ console.log("═".repeat(90));
  * so this keeps working on the real community: the member with the highest
  * ratio-to-own-rhythm, and the member with the longest *absolute* silence who is
  * nonetheless still inside their own rhythm.
+ *
+ * The signal candidate must pass the structural guards. The highest raw ratio in
+ * a real community belongs to a burst poster whose "rhythm" is seconds long —
+ * minRhythmHours suppresses them *by design*, and if the harness picks them as
+ * the signal, the table below demands a fire that should never happen and
+ * reports MISSES at every setting. Found live: a 491,332× ratio on a 0.00-day
+ * rhythm, "missed" at every gapRatio.
  */
 function findPair(states: Map<string, MemberState>) {
   const all = [...states.values()].filter((s) => s.medianGapHours > 0);
-  const signal = all
-    .filter((s) => s.messageCount >= DEFAULT_THRESHOLDS.minObservations)
-    .sort(
-      (a, b) =>
-        b.currentGapHours / b.medianGapHours - a.currentGapHours / a.medianGapHours,
-    )[0];
+  const eligible = all.filter(
+    (s) =>
+      s.messageCount >= DEFAULT_THRESHOLDS.minObservations &&
+      !s.saidFarewell &&
+      s.medianGapHours >= DEFAULT_THRESHOLDS.minRhythmHours &&
+      s.activeSpanDays >= DEFAULT_THRESHOLDS.minActiveSpanDays,
+  );
+  const signal = eligible.sort(
+    (a, b) =>
+      b.currentGapHours / b.medianGapHours - a.currentGapHours / a.medianGapHours,
+  )[0];
   const control = all
     .filter((s) => s.currentGapHours / s.medianGapHours < 1 && s !== signal)
     .sort((a, b) => b.currentGapHours - a.currentGapHours)[0];
-  return { signal, control };
+  const suppressed = all.filter(
+    (s) =>
+      s.messageCount >= DEFAULT_THRESHOLDS.minObservations &&
+      !eligible.includes(s),
+  );
+  return { signal, control, suppressed };
 }
 
-const { signal, control } = findPair(states);
+const { signal, control, suppressed } = findPair(states);
 
 if (!signal || !control) {
   console.log("\n  Could not identify a discriminating pair in this data.");
   console.log("  That is itself informative: this community may lack the contrast");
   console.log("  the demo depends on. Check before filming.\n");
 } else {
+  if (suppressed.length > 0) {
+    console.log(
+      `\n  note: ${suppressed.length} high-ratio member(s) excluded from signal` +
+        ` consideration — burst/churn patterns the guards correctly suppress` +
+        ` (e.g. ${suppressed[0]!.name}).`,
+    );
+  }
   const r = (s: MemberState) => s.currentGapHours / s.medianGapHours;
   console.log(
     `\n  signal :  ${signal.name.padEnd(20)} quiet ${(signal.currentGapHours / 24).toFixed(1)}d · ` +

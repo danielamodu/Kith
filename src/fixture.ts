@@ -48,6 +48,8 @@ type Persona = {
   lengthChars: number;
   /** if set, last messages shrink toward this fraction of normal length */
   taperTo?: number;
+  /** over how many trailing messages the taper ramps down (default 12) */
+  taperMsgs?: number;
 };
 
 const NOW = new Date("2026-08-16T12:00:00Z").getTime();
@@ -64,6 +66,11 @@ const personas: Persona[] = [
     helpfulness: 0.55,
     lengthChars: 180,
     taperTo: 0.25,
+    // Real burnout ramps over roughly two weeks, not three messages — and D3
+    // requires exactly that persistence before it will speak. The old 3-message
+    // cliff here was itself the kind of "one bad evening" pattern the hardened
+    // detector exists to ignore.
+    taperMsgs: 12,
   },
   // ── the control: same 9-day silence, but that IS her rhythm. Must NOT fire ──
   {
@@ -126,10 +133,14 @@ const personas: Persona[] = [
   // sweep's higher steps (12, 20, 40). Also carries a gap-drift signal so the
   // sweep visibly loses her as minObservations climbs past her count.
   { name: "Aisha Bello", rhythmHours: 48, irregularity: 0.3, joinsDaysAgo: 28, goesQuietDaysAgo: 10, helpfulness: 0.0, lengthChars: 85 },
-  // toneShrink boundary: tapers to ~58% of her own normal length while
-  // remaining active — tests that tone-shift alone still never composes,
-  // even when it fires right at the edge of the threshold.
-  { name: "Marco Rossi", rhythmHours: 15, irregularity: 0.4, joinsDaysAgo: 35, helpfulness: 0.0, lengthChars: 140, taperTo: 0.58 },
+  // toneShrink boundary: tapers steadily toward ~40% of her own normal length
+  // across two full windows — passes shrink AND persistence right at the edge
+  // of the thresholds. Tests that a sustained taper still never composes alone,
+  // even when it fires. Pairs with Hana Suzuki below, the matching negative.
+  { name: "Marco Rossi", rhythmHours: 15, irregularity: 0.4, joinsDaysAgo: 35, helpfulness: 0.0, lengthChars: 140, taperTo: 0.35, taperMsgs: 14 },
+  // one-bad-day control: recent window dips hard but the prior window is at
+  // her norm — the exact false positive persistence-gating exists to kill.
+  { name: "Hana Suzuki", rhythmHours: 12, irregularity: 0.3, joinsDaysAgo: 40, helpfulness: 0.0, lengthChars: 130, taperTo: 0.2, taperMsgs: 3 },
   // bursty poster: irregularity > 1 means gaps are sometimes larger than the
   // rhythm itself. Stress-tests the gapMads guard against something noisier
   // than the original personas' comparatively tidy rhythms.
@@ -194,11 +205,17 @@ for (const p of personas) {
     t += step * HOUR;
   }
   stamps.forEach((ts, i) => {
-    // taper the final messages if this persona is winding down
+    // taper the trailing messages if this persona is winding down — a gradual
+    // ramp, because a real wind-down declines over days and D3 will not accept
+    // anything shorter as evidence
     let len = Math.max(3, Math.round(jitter(p.lengthChars, p.lengthChars * 0.25)));
     if (p.taperTo) {
+      const n = Math.min(p.taperMsgs ?? 12, stamps.length);
       const fromEnd = stamps.length - 1 - i;
-      if (fromEnd < 3) len = Math.round(p.lengthChars * p.taperTo * (1 + fromEnd * 0.15));
+      if (fromEnd < n) {
+        const frac = n > 1 ? (n - 1 - fromEnd) / (n - 1) : 1;
+        len = Math.max(3, Math.round(p.lengthChars * (1 - (1 - p.taperTo) * frac)));
+      }
     }
     const kind: "q" | "a" | "c" = rnd() < p.helpfulness ? "a" : rnd() < 0.18 ? "q" : "c";
     planned.push({ ts, persona: p, kind, len });

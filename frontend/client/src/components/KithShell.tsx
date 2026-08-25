@@ -61,6 +61,17 @@ export const api = {
       return fallback;
     }
   },
+  // Same contract as postOrThrow, for reads where a failure must surface —
+  // the setup wizard's hosted-bot endpoints, where a missing configuration
+  // has to change what the UI renders, not silently render less of it.
+  async getOrThrow<T>(path: string): Promise<T> {
+    const response = await fetch(path, { headers: { Accept: "application/json" } });
+    const data = await response.json().catch(() => ({}) as Record<string, unknown>);
+    if (!response.ok) {
+      throw new Error(typeof data.error === "string" ? data.error : `Request failed: ${response.status}`);
+    }
+    return data as T;
+  },
   // For actions where a failure must never look like success — spending
   // real cognition and silently falling back to filler text is actively
   // misleading, unlike a read falling back to illustrative fixture data,

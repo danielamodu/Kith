@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { loadExport } from "./ingest.ts";
 import { buildMemberStates } from "./members.ts";
-import { runAll, communityReplyNorm, d2GapDrift, DEFAULT_THRESHOLDS } from "./detectors.ts";
+import { runAll, communityReplyNorm, d2GapDrift, d3ToneShift, d4UnansweredNewcomers, compose, DEFAULT_THRESHOLDS } from "./detectors.ts";
 import { buildWatchlist, buildRegistry, estimateTokens } from "./registry.ts";
 import type { MemberState } from "./types.ts";
 
@@ -102,7 +102,9 @@ function fakeMemberState(overrides: Partial<MemberState>): MemberState {
     gapMadHours: 0.001,
     currentGapHours: 24.2,
     medianLength: 40,
+    lengthMad: 8,
     recentMedianLength: 40,
+    priorRecentMedianLength: 40,
     answersGiven: 171,
     distinctRepliedTo: 100,
     answersToNewcomers: 157,
@@ -133,6 +135,149 @@ test("a genuinely slow, meaningful rhythm still correctly triggers gap-drift", (
   const observations = d2GapDrift(states, DEFAULT_THRESHOLDS);
   assert.equal(observations.filter((o) => o.memberName === "Slow Poster").length, 1);
 });
+
+// ── D3 gates ────────────────────────────────────────────────────────────────
+// Each gate exists to block a specific false positive; each test holds one
+// gate open and the others satisfied, so a regression names the broken gate.
+
+const d3 = (overrides: Partial<MemberState>) => {
+  const states = new Map([["m", fakeMemberState({ id: "m", name: "Tone Member", ...overrides })]]);
+  return d3ToneShift(states, DEFAULT_THRESHOLDS).length;
+};
+
+test("D3 fires on a sustained, robust taper", () => {
+  // Both windows shortened, drop far outside their usual length variation.
+  assert.equal(
+    d3({ medianLength: 180, lengthMad: 20, recentMedianLength: 60, priorRecentMedianLength: 110 }),
+    1,
+  );
+});
+
+test("D3 ignores one bad day — the taper must persist into the prior window", () => {
+  // Recent window dipped hard, but the window before it was at their norm.
+  assert.equal(
+    d3({ medianLength: 180, lengthMad: 20, recentMedianLength: 40, priorRecentMedianLength: 175 }),
+    0,
+  );
+});
+
+test("D3 stays quiet when the drop is within the person's ordinary variation", () => {
+  // 25% shorter, but this person's lengths routinely swing that much.
+  assert.equal(
+    d3({ medianLength: 100, lengthMad: 35, recentMedianLength: 55, priorRecentMedianLength: 60 }),
+    0,
+  );
+});
+
+test("D3 refuses to speak when persistence cannot be established", () => {
+  // No prior window (short history): even a dramatic shrink is unproven.
+  assert.equal(
+    d3({ medianLength: 180, lengthMad: 10, recentMedianLength: 30, priorRecentMedianLength: 0 }),
+    0,
+  );
+});
+
+// ── Real-community regressions (found in the first 195-member Discord run) ──
+
+test("a weekend visitor who vanished is churn, not gap-drift", () => {
+  // Real case: burst poster, 8+ messages in ~2 days, silent 86 days, 986×
+  // ratio. Arithmetic yes; signal no — they never had a rhythm to break.
+  const churn = new Map([
+    [
+      "churn",
+      fakeMemberState({
+        id: "churn",
+        name: "Weekend Visitor",
+        messageCount: 30,
+        medianGapHours: 2,
+        gapMadHours: 1,
+        currentGapHours: 24 * 86,
+        activeSpanDays: 2,
+      }),
+    ],
+  ]);
+  assert.equal(d2GapDrift(churn, DEFAULT_THRESHOLDS).length, 0);
+
+  // Same person with a real history behind them: now it is drift.
+  const regular = new Map([
+    [
+      "regular",
+      fakeMemberState({
+        id: "regular",
+        name: "Established Regular",
+        messageCount: 30,
+        medianGapHours: 2,
+        gapMadHours: 1,
+        currentGapHours: 24 * 86,
+        activeSpanDays: 60,
+      }),
+    ],
+  ]);
+  assert.equal(d2GapDrift(regular, DEFAULT_THRESHOLDS).length, 1);
+});
+
+test("a minute-scale reply norm cannot shrink the patience window to nothing", () => {
+  // Real case: 195-member server, median reply latency in minutes, 44 people
+  // flagged at confidence 1.0 because 3× minutes is no patience at all.
+  const t0 = new Date("2026-08-24T00:00:00Z");
+  const msg = (id: string, authorId: string, minsAfter: number, replyToId?: string) => ({
+    id,
+    ts: new Date(t0.getTime() + minsAfter * 60000),
+    authorId,
+    authorName: authorId,
+    text: "hello",
+    length: 5,
+    replyToId,
+  });
+  const community = {
+    name: "firehose",
+    messages: [
+      // the only reply in the community lands one minute later — norm = 1 min
+      msg("a", "alice", 0),
+      msg("b", "bob", 1, "a"),
+      // newcomer's first message, 40 hours ago, never answered
+      msg("c", "carol", 10, undefined),
+    ],
+    events: [],
+    from: t0,
+    to: new Date(t0.getTime() + 41 * HOUR),
+  };
+  const carolState = (): MemberState => ({
+    ...fakeMemberState({ id: "carol", name: "Carol" }),
+    tenureDays: 1.7,
+    messageCount: 1,
+  });
+  const states = new Map([["carol", carolState()]]);
+
+  const obs = d4UnansweredNewcomers(community, states, community.to, DEFAULT_THRESHOLDS);
+  // 40h < the 48h floor, even though 3× the one-minute norm is 3 minutes.
+  assert.equal(obs.length, 0);
+});
+
+test("a wall of unanswered newcomers shows the longest-waiting few, not all of them", () => {
+  const t0 = new Date("2026-08-24T00:00:00Z");
+  const obs = Array.from({ length: 44 }, (_, i) => ({
+    memberId: `m${i}`,
+    memberName: i === 3 ? "Oldest Waiter" : `Member ${i}`,
+    kind: "unanswered-newcomer" as const,
+    confidence: 1,
+    claim: "unanswered",
+    evidence: [
+      { at: new Date(t0.getTime() - (44 - i) * DAY), fact: "first message" },
+      { at: t0, fact: "still unanswered" },
+    ],
+    baseline: "n/a",
+  }));
+  const [composite] = compose(obs);
+  assert.ok(composite, "44 newcomers must compose into one batched item");
+  assert.ok(composite.memberName.includes("Oldest Waiter"), "longest-waiting is named first");
+  assert.ok(!composite.memberName.includes("Member 6"), "names beyond the cap are hidden");
+  assert.ok(composite.memberName.includes("38 others"), "the count of the rest is stated");
+  assert.equal(composite.parts.length, 44, "the full list survives in the parts");
+});
+
+const HOUR = 1000 * 60 * 60;
+const DAY = 24 * HOUR;
 
 test("unanswered newcomers batch into one item, not one alert each", () => {
   const newcomerObs = observations.filter((o) => o.kind === "unanswered-newcomer");

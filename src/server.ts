@@ -46,6 +46,14 @@ import {
   checkPush,
   OnboardingError,
 } from "./onboarding.ts";
+import {
+  encryptSecret,
+  saveGuildConfig,
+  getGuildConfig,
+  listGuilds,
+  type GuildConfig,
+} from "./tenant-store.ts";
+import { runCycle } from "./cron-poll.ts";
 
 const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
@@ -512,27 +520,171 @@ function onboardingError(res: express.Response, err: unknown): void {
   }
 }
 
-app.post("/api/setup/verify-discord", async (req, res) => {
-  const token = req.body?.token;
-  if (typeof token !== "string" || !token.trim()) {
-    res.status(400).json({ error: "Missing Discord bot token." });
+/**
+ * Token resolution for the setup flow: a pasted token (self-host path)
+ * wins; otherwise the hosted bot speaks for the creator (hosted path).
+ * This is the seam that lets the same routes serve both — the hosted
+ * frontend simply omits the token field.
+ */
+function resolveToken(pasted: unknown): string | null {
+  if (typeof pasted === "string" && pasted.trim()) return pasted.trim();
+  const hosted = process.env.DISCORD_BOT_TOKEN;
+  return hosted && hosted.trim() ? hosted.trim() : null;
+}
+
+// ── hosted-product routes ────────────────────────────────────────────────────
+
+// The invite link that replaces the developer-portal ritual: one click adds
+// the hosted bot to the creator's server with exactly the permissions Kith
+// needs and nothing more. Requires DISCORD_CLIENT_ID (the hosted bot's
+// application id) in the deployment environment.
+app.get("/api/invite-url", (_req, res) => {
+  const clientId = process.env.DISCORD_CLIENT_ID;
+  if (!clientId) {
+    res.status(501).json({ error: "Hosted bot not configured (missing DISCORD_CLIENT_ID)." });
+    return;
+  }
+  // View Channels + Read Message History + Send Messages (digest) — the
+  // whole permission surface, deliberately minimal.
+  const permissions = "66560";
+  res.json({
+    url: `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot&permissions=${permissions}`,
+  });
+});
+
+// The guilds the hosted bot is actually in — the wizard's "pick your
+// server" dropdown. Zero typing for the creator: invite, detect, pick.
+app.get("/api/setup/guilds", async (_req, res) => {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    res.status(501).json({ error: "Hosted bot not configured (missing DISCORD_BOT_TOKEN)." });
     return;
   }
   try {
-    res.json(await verifyDiscordToken(token.trim()));
+    const res2 = await fetch("https://discord.com/api/v10/users/@me/guilds", {
+      headers: { Authorization: `Bot ${token}` },
+    });
+    if (!res2.ok) {
+      res.status(502).json({ error: `Discord guild list failed (${res2.status}).` });
+      return;
+    }
+    const guilds = (await res2.json()) as Array<{ id: string; name: string }>;
+    res.json({ guilds: guilds.map((g) => ({ id: g.id, name: g.name })) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// The creator connects their Mind: verify the key works, encrypt it, store
+// the guild config. The key is returned nowhere after this call.
+app.post("/api/setup/connect", async (req, res) => {
+  const { guildId, guildName, channelIds, digestChannelId, apiKey, mindId } = req.body ?? {};
+  if (typeof guildId !== "string" || !guildId.trim()) {
+    res.status(400).json({ error: "Missing server (guild) id." });
+    return;
+  }
+  if (!Array.isArray(channelIds) || channelIds.length === 0 || !channelIds.every((c) => typeof c === "string")) {
+    res.status(400).json({ error: "Missing channels to watch." });
+    return;
+  }
+  if (typeof apiKey !== "string" || !apiKey.trim() || typeof mindId !== "string" || !mindId.trim()) {
+    res.status(400).json({ error: "Missing Minds Builder API key or Mind id." });
+    return;
+  }
+  try {
+    // Verify before storing — a typo'd key should fail here, at connect
+    // time, not silently on the third nightly cycle.
+    const balance = await getCognitionBalance(apiKey.trim(), mindId.trim());
+    const existing = await getGuildConfig(guildId.trim());
+    const config: GuildConfig = {
+      guildId: guildId.trim(),
+      ...(typeof guildName === "string" && guildName.trim() ? { guildName: guildName.trim() } : {}),
+      channelIds: channelIds as string[],
+      ...(typeof digestChannelId === "string" && digestChannelId.trim() ? { digestChannelId: digestChannelId.trim() } : {}),
+      mindsKeyEnc: encryptSecret(apiKey.trim()),
+      mindId: mindId.trim(),
+      connectedAt: existing?.connectedAt ?? new Date().toISOString(),
+      ...(existing?.lastPollAt ? { lastPollAt: existing.lastPollAt } : {}),
+      ...(existing?.lastWatchlistJson ? { lastWatchlistJson: existing.lastWatchlistJson } : {}),
+      ...(existing?.lastDigestFingerprint ? { lastDigestFingerprint: existing.lastDigestFingerprint } : {}),
+    };
+    await saveGuildConfig(config);
+    res.json({ ok: true, cognition: balance.cognition, guilds: (await listGuilds()).length });
+  } catch (err) {
+    onboardingError(res, err);
+  }
+});
+
+// The hosted runtime's entry point. Vercel cron sends GET with a bearer
+// CRON_SECRET; a manual POST with the same secret works for on-demand
+// cycles. No secret configured → local/dev only, refuse on Vercel.
+function cronAuthorized(req: express.Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return !process.env.VERCEL;
+  const header = req.headers.authorization ?? "";
+  return header === `Bearer ${secret}`;
+}
+
+app.get("/api/cron/poll", async (req, res) => {
+  if (!cronAuthorized(req)) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    res.status(501).json({ error: "Hosted bot not configured (missing DISCORD_BOT_TOKEN)." });
+    return;
+  }
+  try {
+    res.json({ results: await runCycle(token) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/cron/poll", async (req, res) => {
+  if (!cronAuthorized(req)) {
+    res.status(401).json({ error: "Unauthorized." });
+    return;
+  }
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    res.status(501).json({ error: "Hosted bot not configured (missing DISCORD_BOT_TOKEN)." });
+    return;
+  }
+  try {
+    res.json({ results: await runCycle(token) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/setup/verify-discord", async (req, res) => {
+  const token = resolveToken(req.body?.token);
+  if (!token) {
+    res.status(400).json({ error: "Missing Discord bot token (and no hosted bot configured)." });
+    return;
+  }
+  try {
+    res.json(await verifyDiscordToken(token));
   } catch (err) {
     onboardingError(res, err);
   }
 });
 
 app.post("/api/setup/list-channels", async (req, res) => {
-  const { token, guildId } = req.body ?? {};
-  if (typeof token !== "string" || typeof guildId !== "string" || !guildId.trim()) {
-    res.status(400).json({ error: "Missing token or server (guild) id." });
+  const { guildId } = req.body ?? {};
+  const token = resolveToken(req.body?.token);
+  if (typeof guildId !== "string" || !guildId.trim()) {
+    res.status(400).json({ error: "Missing server (guild) id." });
+    return;
+  }
+  if (!token) {
+    res.status(400).json({ error: "Missing token (and no hosted bot configured)." });
     return;
   }
   try {
-    const channels = await listChannels(token.trim(), guildId.trim());
+    const channels = await listChannels(token, guildId.trim());
     res.json({ channels });
   } catch (err) {
     onboardingError(res, err);
@@ -540,28 +692,38 @@ app.post("/api/setup/list-channels", async (req, res) => {
 });
 
 app.post("/api/setup/check-channel", async (req, res) => {
-  const { token, channelId } = req.body ?? {};
-  if (typeof token !== "string" || typeof channelId !== "string" || !channelId.trim()) {
-    res.status(400).json({ error: "Missing token or channel id." });
+  const { channelId } = req.body ?? {};
+  const token = resolveToken(req.body?.token);
+  if (typeof channelId !== "string" || !channelId.trim()) {
+    res.status(400).json({ error: "Missing channel id." });
+    return;
+  }
+  if (!token) {
+    res.status(400).json({ error: "Missing token (and no hosted bot configured)." });
     return;
   }
   try {
-    res.json(await checkChannel(token.trim(), channelId.trim()));
+    res.json(await checkChannel(token, channelId.trim()));
   } catch (err) {
     onboardingError(res, err);
   }
 });
 
 app.post("/api/setup/build", async (req, res) => {
-  const { token, channelId, communityName, sinceDays } = req.body ?? {};
-  if (typeof token !== "string" || typeof channelId !== "string" || !channelId.trim()) {
-    res.status(400).json({ error: "Missing token or channel id." });
+  const { channelId, communityName, sinceDays } = req.body ?? {};
+  const token = resolveToken(req.body?.token);
+  if (typeof channelId !== "string" || !channelId.trim()) {
+    res.status(400).json({ error: "Missing channel id." });
+    return;
+  }
+  if (!token) {
+    res.status(400).json({ error: "Missing token (and no hosted bot configured)." });
     return;
   }
   const days = Math.min(60, Math.max(1, Number(sinceDays) || 14));
   try {
     const { community, stats } = await backfillCommunity(
-      token.trim(),
+      token,
       channelId.trim(),
       typeof communityName === "string" && communityName.trim() ? communityName.trim() : "your community",
       { sinceDays: days },

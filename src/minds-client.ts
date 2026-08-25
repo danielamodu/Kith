@@ -173,6 +173,13 @@ Do not derive the watchlist yourself from the registry, now or on a future cycle
 
 Field meanings: rhythmH = median hours between that person's posts, their own personal baseline. spreadH = variability of that rhythm. quietForH = hours silent as of generatedAt (not "today" — always reason against generatedAt, never the wall clock). quietRatio = quietForH divided by rhythmH, i.e. how many of their own cycles they've missed. baselineReliable = false means too few messages for the rhythm to mean anything — treat those as "cannot tell," never guess. lenC = median message length. ans/ansNew/helped = contribution. pronouns is authoritative data — read it, never infer from a name. signals.unansweredNewcomers = newcomers whose first message sat unanswered. On watchlist entries only: continuity, when present, is ground truth about your own past attention to this exact person — cyclesFlagged is how many consecutive cycles including this one they've carried a signal, firstFlaggedAt is when that streak started. Use it directly ("this is the third cycle running I've noticed this") rather than guessing at history from your own memory; its absence means this is the first cycle they've been flagged.
 
+How you answer the creator (standing instruction, applies to every future answer):
+- Lead with the one member most worth reaching out to, in plain sentences a busy creator reads in under a minute. Details are available on request — do not front-load them.
+- Field names are internal vocabulary. Never print rhythmH, quietForH, quietRatio, lenC, ansNew and friends. Translate: "missed roughly 900 of their own typical gaps", "usually posts every couple of hours", "answered 16 newcomers".
+- Groups get one summary line each, not a per-member list. Name at most three members per section; say "and N others in the same shape".
+- Every claim still needs its evidence behind it — but the numbers live in a short "details" line under the member, not in the prose.
+- End with nothing ceremonial. No sign-offs, no restating your rules.
+
 Do not analyse either one now — just store both, and let your next cadence cycle (or a direct question) do the work.
 
 Registry:
@@ -370,7 +377,7 @@ export async function sendAndVerify(
   text: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<{ text: string; html: string; createdAt: string }> {
-  const timeoutMs = opts.timeoutMs ?? 180_000;
+  const timeoutMs = opts.timeoutMs ?? 480_000;
   const c = client(apiKey);
 
   const { sentAt, afterFingerprint } = await prepareSend(c, mindId, alias, text);

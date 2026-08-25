@@ -42,7 +42,14 @@ type PushStart = { alias: string; sentAt: string; afterFingerprint?: string; sen
 type PushStatus = { done: boolean; text?: string; createdAt?: string; spent?: number | null };
 
 export default function Setup() {
-  // step 1 — discord token
+  // step 1 — invite the hosted bot, detect the server. No token paste: the
+  // hosted bot is ours; the creator just adds it. The old paste-a-token
+  // path survives as a fallback for when the deployment has no hosted bot.
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [hostedUnavailable, setHostedUnavailable] = useState(false);
+  const [guilds, setGuilds] = useState<Array<{ id: string; name: string }>>([]);
+  const [detecting, setDetecting] = useState(false);
+  const [guildName, setGuildName] = useState<string | null>(null);
   const [token, setToken] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [botUsername, setBotUsername] = useState<string | null>(null);
@@ -51,6 +58,7 @@ export default function Setup() {
   // step 2 — channel
   const [guildId, setGuildId] = useState("");
   const [channelId, setChannelId] = useState("");
+  const [digestChannelId, setDigestChannelId] = useState("");
   const [channels, setChannels] = useState<DiscordChannel[]>([]);
   const [listingChannels, setListingChannels] = useState(false);
   const [checkingChannel, setCheckingChannel] = useState(false);
@@ -80,9 +88,36 @@ export default function Setup() {
   const [pushStart, setPushStart] = useState<PushStart | null>(null);
   const mountedRef = useMountedRef();
 
-  const step2Open = Boolean(botUsername);
+  const step2Open = Boolean(guildId) && (Boolean(guildName) || Boolean(botUsername));
   const step3Open = Boolean(channelCheck?.ok);
   const step4Open = Boolean(buildResult);
+
+  async function loadInvite() {
+    try {
+      const result = await api.getOrThrow<{ url: string }>("/api/invite-url");
+      setInviteUrl(result.url);
+      window.open(result.url, "_blank", "noopener");
+      toast("Invited Kith? Hit \"Detect my server\" next.");
+    } catch {
+      setHostedUnavailable(true);
+    }
+  }
+
+  async function detectGuilds() {
+    setDetecting(true);
+    setTokenError(null);
+    try {
+      const result = await api.getOrThrow<{ guilds: Array<{ id: string; name: string }> }>("/api/setup/guilds");
+      setGuilds(result.guilds);
+      if (result.guilds.length === 0) {
+        toast("Kith isn't in any server yet — use the invite button first.");
+      }
+    } catch (err) {
+      setTokenError(err instanceof Error ? err.message : "Couldn't detect servers.");
+    } finally {
+      setDetecting(false);
+    }
+  }
 
   async function verifyToken() {
     setVerifying(true);
@@ -191,7 +226,22 @@ export default function Setup() {
       );
       setPushResult({ text: status.text ?? "", createdAt: status.createdAt ?? "" });
       setPushSpent(status.spent ?? null);
-      toast("Stored. Your Mind now holds this as a durable Artifact.");
+      // Register the guild for the hosted cycle — this is the moment the
+      // product takes over from the wizard: from here the cron loop polls,
+      // rebuilds, re-pushes, and posts digests with nobody at a terminal.
+      try {
+        await api.postOrThrow("/api/setup/connect", {
+          guildId,
+          guildName: guildName ?? undefined,
+          channelIds: [channelId],
+          ...(digestChannelId.trim() ? { digestChannelId: digestChannelId.trim() } : {}),
+          apiKey,
+          mindId,
+        });
+        toast("Stored — and the nightly cycle is now live. You can close this tab.");
+      } catch (err) {
+        toast(`Stored, but the automatic cycle couldn't be registered: ${err instanceof Error ? err.message : "unknown error"}`);
+      }
       setPushStart(null);
     } catch (err) {
       if (err instanceof PollAbortedError) return; // navigated away — nothing to show
@@ -276,11 +326,11 @@ export default function Setup() {
         <div className="how-hero">
           <div>
             <SectionLabel tone="coral">Give your Mind a memory</SectionLabel>
-            <h1>Connect your <em>Discord.</em> Build the memory.</h1>
+            <h1>Invite Kith. Pick a channel. <em>Done.</em></h1>
             <p>
-              Four steps, no terminal required: verify your bot, point it at one channel, build the registry, and
-              push it into your own Mind. Nothing here touches our Mind or our data — everything runs against your
-              own credentials, for this one session only.
+              Four steps, no terminal, no developer portal: invite the bot, pick a channel, build the memory,
+              push it into your own Mind. After the push, the nightly cycle takes over — Kith keeps reading,
+              keeps remembering, and posts a digest only when something needs you.
             </p>
           </div>
           <div className="how-hero-orb">
@@ -292,10 +342,11 @@ export default function Setup() {
         <div className="data-disclosure" style={{ marginBottom: "40px" }}>
           <div><ShieldCheck size={18} /><span>What happens to your credentials</span></div>
           <p>
-            Your Discord bot token and Minds Builder API key are sent to our server for the single request that
-            needs them, used once, and never written to a database, a log, or a file. Close this tab and nothing
-            of yours remains on our side. If you'd rather not send them to us at all, the identical pipeline runs
-            entirely on your own machine via <code>npm run setup</code> — see{" "}
+            The hosted bot reads your server's public history — that is its whole function, and it never writes
+            to your server except the digest channel you choose. Your Minds Builder API key is sent once, at
+            connect time, encrypted at rest (AES-256-GCM) and decrypted only when a cycle talks to your Mind.
+            It is never logged or displayed. Prefer nothing of yours on our side at all? The identical pipeline
+            runs entirely on your own machine via <code>npm run setup</code> — see{" "}
             <a href="https://github.com/danielamodu/Kith/blob/main/docs/self-hosting.md" target="_blank" rel="noreferrer">
               docs/self-hosting.md
             </a>.
@@ -305,29 +356,63 @@ export default function Setup() {
         <div className="wizard-steps">
           {/* Step 1 */}
           <Surface className="wizard-step" accent="butter">
-            <StepHead num={1} done={step2Open} title="Connect your Discord bot" desc="Paste the bot token from the Discord Developer Portal. Used once, to confirm it works." />
+            <StepHead num={1} done={step2Open} title="Invite Kith to your server" desc="One click, no developer portal. Kith reads history and stays quiet — members never see it post." />
             <div className="wizard-step-body">
               <div className="field-inline">
-                <div className="field">
-                  <label htmlFor="discord-token">Bot token</label>
-                  <input
-                    id="discord-token"
-                    type="password"
-                    autoComplete="off"
-                    placeholder="MTA1..."
-                    value={token}
-                    onChange={(e) => setToken(e.target.value)}
-                  />
-                </div>
-                <TactileButton variant="primary" onClick={verifyToken} disabled={!token || verifying}>
-                  {verifying ? <Loader2 size={15} className="spin" /> : <Bot size={15} />}
-                  {verifying ? "Checking…" : "Verify bot"}
+                <TactileButton variant="primary" onClick={loadInvite} disabled={!inviteUrl && hostedUnavailable}>
+                  <Bot size={15} /> {inviteUrl ? "Invite again" : "Add Kith to my server"}
+                </TactileButton>
+                <TactileButton variant="soft" onClick={detectGuilds} disabled={detecting}>
+                  {detecting ? <Loader2 size={15} className="spin" /> : <Check size={15} />}
+                  {detecting ? "Looking…" : "Detect my server"}
                 </TactileButton>
               </div>
-              <p className="field-hint">
-                No bot yet? Discord Developer Portal → New Application → Bot → Reset Token, then enable{" "}
-                <b>Message Content Intent</b> on the Bot page — without it every message arrives empty.
-              </p>
+              {guilds.length > 0 && (
+                <div className="channel-list">
+                  {guilds.map((g) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      className={`channel-chip ${guildId === g.id ? "is-selected" : ""}`}
+                      onClick={() => { setGuildId(g.id); setGuildName(g.name); }}
+                    >
+                      {g.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {guildId && guildName && (
+                <div className="step-result step-result--ok"><CheckCircle2 size={16} /> Watching <b>{guildName}</b>.</div>
+              )}
+              {!inviteUrl && !hostedUnavailable && (
+                <p className="field-hint">Click the invite button — it opens Discord's own permission screen and nothing else.</p>
+              )}
+              {hostedUnavailable && (
+                <>
+                  <p className="field-hint">
+                    This deployment isn't running a hosted bot. Self-host path: paste your own bot token below —
+                    Discord Developer Portal → New Application → Bot → Reset Token, then enable{" "}
+                    <b>Message Content Intent</b> on the Bot page.
+                  </p>
+                  <div className="field-inline">
+                    <div className="field">
+                      <label htmlFor="discord-token">Your bot token</label>
+                      <input
+                        id="discord-token"
+                        type="password"
+                        autoComplete="off"
+                        placeholder="MTA1..."
+                        value={token}
+                        onChange={(e) => setToken(e.target.value)}
+                      />
+                    </div>
+                    <TactileButton variant="primary" onClick={verifyToken} disabled={!token || verifying}>
+                      {verifying ? <Loader2 size={15} className="spin" /> : <Bot size={15} />}
+                      {verifying ? "Checking…" : "Verify bot"}
+                    </TactileButton>
+                  </div>
+                </>
+              )}
               {botUsername && (
                 <div className="step-result step-result--ok"><CheckCircle2 size={16} /> Connected as <b>{botUsername}</b>.</div>
               )}
@@ -373,6 +458,15 @@ export default function Setup() {
                   </TactileButton>
                 </div>
                 <p className="field-hint">Enable Developer Mode in Discord (Settings → Advanced) to right-click and copy ids.</p>
+                <div className="field">
+                  <label htmlFor="digest-channel">Digest channel id — optional, private #kith recommended</label>
+                  <input
+                    id="digest-channel"
+                    placeholder="where Kith posts its daily 'nothing needs you today'"
+                    value={digestChannelId}
+                    onChange={(e) => setDigestChannelId(e.target.value)}
+                  />
+                </div>
                 {channelCheck?.ok && (
                   <div className="step-result step-result--ok">
                     <CheckCircle2 size={16} /> Readable — {channelCheck.withContent}/{channelCheck.sampled} sampled messages had content.

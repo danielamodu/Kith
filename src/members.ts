@@ -115,10 +115,11 @@ export function buildMemberStates(
     }
 
     // Only messages with text carry a length signal; stickers and media do not.
-    const lengths = msgs.filter((m) => m.length > 0).map((m) => m.length);
-    const recentLengths = msgs
-      .filter((m) => m.length > 0)
-      .slice(-RECENT_SAMPLE)
+    const withText = msgs.filter((m) => m.length > 0);
+    const lengths = withText.map((m) => m.length);
+    const recentLengths = withText.slice(-RECENT_SAMPLE).map((m) => m.length);
+    const priorRecentLengths = withText
+      .slice(-RECENT_SAMPLE * 2, -RECENT_SAMPLE)
       .map((m) => m.length);
 
     states.set(id, {
@@ -136,7 +137,11 @@ export function buildMemberStates(
       gapMadHours: mad(gaps),
       currentGapHours: (asOf.getTime() - last.getTime()) / HOUR,
       medianLength: median(lengths),
+      lengthMad: mad(lengths),
       recentMedianLength: median(recentLengths),
+      // median() of an empty window is 0, which the detector reads as
+      // "persistence cannot be established" — lengths are always positive.
+      priorRecentMedianLength: median(priorRecentLengths),
       answersGiven: answers.get(id) ?? 0,
       distinctRepliedTo: repliedTo.get(id)?.size ?? 0,
       answersToNewcomers: answersToNewcomers.get(id) ?? 0,
