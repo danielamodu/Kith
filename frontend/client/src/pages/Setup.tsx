@@ -229,24 +229,7 @@ export default function Setup() {
       );
       setPushResult({ text: status.text ?? "", createdAt: status.createdAt ?? "" });
       setPushSpent(status.spent ?? null);
-      // Register the guild for the hosted cycle — this is the moment the
-      // product takes over from the wizard: from here the cron loop polls,
-      // rebuilds, re-pushes, and posts digests with nobody at a terminal.
-      try {
-        await api.postOrThrow("/api/setup/connect", {
-          guildId,
-          guildName: guildName ?? undefined,
-          channelIds: [channelId],
-          ...(digestChannelId.trim() ? { digestChannelId: digestChannelId.trim() } : {}),
-          apiKey,
-          mindId,
-        });
-        setCycleRegistered(true);
-        toast("Stored — and the nightly cycle is now live. You can close this tab.");
-      } catch (err) {
-        setCycleRegistered(false);
-        toast(`Stored, but the automatic cycle couldn't be registered: ${err instanceof Error ? err.message : "unknown error"}`);
-      }
+      toast("Stored. Your Mind now holds this as a durable Artifact.");
       setPushStart(null);
     } catch (err) {
       if (err instanceof PollAbortedError) return; // navigated away — nothing to show
@@ -285,7 +268,26 @@ export default function Setup() {
         watchlist: buildResult.watchlist,
         confirm: true,
       });
-      toast("Sent. Real replies have taken anywhere from under a minute to well over an hour — this page will keep checking, just don't reload it.");
+      // Register the guild for the hosted cycle IMMEDIATELY after the send
+      // — not after the reply lands. The artifacts are sent; the Mind's
+      // confirmation only gates the success message, and its latency is
+      // unbounded (observed: under a minute to over an hour). A creator who
+      // gives up during the wait must still leave with the product switched
+      // on: the first nightly cycle re-pushes and confirms on its own.
+      try {
+        await api.postOrThrow("/api/setup/connect", {
+          guildId,
+          guildName: guildName ?? undefined,
+          channelIds: [channelId],
+          ...(digestChannelId.trim() ? { digestChannelId: digestChannelId.trim() } : {}),
+          apiKey,
+          mindId,
+        });
+        setCycleRegistered(true);
+      } catch {
+        setCycleRegistered(false);
+      }
+      toast("Sent. Real replies have taken anywhere from under a minute to well over an hour — this page will keep checking, and you're already registered either way.");
       setPushStart(start);
       setPushing(false);
       await waitForPush(start);
