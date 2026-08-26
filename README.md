@@ -58,17 +58,44 @@ reason over — see **Run it yourself**, below, for getting your own history in.
 
 ---
 
-## Or use it hosted — no terminal
+## Action Engine — from "knowing" to "acting"
 
-The web wizard is the creator-facing product: **invite the bot, pick a channel, build the
-memory, push to your Mind.** Four steps, no developer portal, no Node, no `.env`. After the
-push, a nightly cycle keeps the memory fresh and posts a digest to a private channel only
-when something needs you — most days it says nothing, which is the product working.
+Kith doesn't just tell you who's fading — it gives you **one-click actions** on every case in the daily digest:
 
-Operators deploy their own instance in minutes: see
-[`docs/hosted-deployment.md`](docs/hosted-deployment.md) for the environment, the cron, and
-the trust model (creator keys encrypted at rest; message data transits the deployment,
-cognition stays in each creator's Mind).
+- **Draft DM** — pre-written, personalized check-in message. Copy, paste, send.
+- **Assign to Mod** — picks the right moderator (by Discord permissions: Administrator, Manage Messages, Moderate Members, or role names "mod"/"moderator"/"admin"), DMs them with context and a dashboard link.
+- **Mark Resolved** — clears the case from the watchlist; Kith will re-flag if the pattern returns.
+
+The bot auto-detects moderators by Discord permissions (Administrator, Manage Messages, Moderate Members, or role names "mod"/"moderator"/"admin") and caches them per guild, refreshed daily and on role/member events.
+
+Every digest item now has buttons: **Draft DM** (primary), **Assign to [Mod]** (secondary), **Mark Resolved** (green). One click → action executed → button disabled with confirmation. The creator never leaves Discord.
+
+---
+
+## How the hosted cycle works
+
+1. **Daily at 06:00 UTC** — Vercel cron (or cron-job.org hourly) triggers `/api/cron/poll`
+2. **Collect** — forward-polls each channel since last cursor (REST, no websockets)
+3. **Rebuild** — local, free, deterministic: baselines, watchlist, composites
+4. **Push** — if watchlist changed, push new artifacts to the creator's Mind (cognitions spent only on change)
+5. **Digest** — render headlines + action buttons, post to private channel (only when something changed)
+6. **Mind cadence** — the Mind itself runs autonomous check-in cycles (cycles 41–46+ observed), reasoning over its own memory, building continuity (`cyclesFlagged`, `firstFlaggedAt`)
+
+**Cost model per guild per cycle:** Discord reads (free), local compute (free), Mind push only when watchlist changed (~few cognitions), digest post (free). A quiet guild costs two Discord reads.
+
+---
+
+## The wizard — four clicks, no terminal
+
+1. **Invite** — one click on Discord's permission screen (hosted bot, no developer portal)
+2. **Detect & Pick** — bot lists servers it's in; creator picks one
+3. **Channel** — pick channel, auto-checks Message Content Intent
+3. **Build** — reads 14–60 days of history, builds per-member baselines
+4. **Push** — sends registry + watchlist to creator's Mind, registers guild for the nightly cycle
+
+**After push:** guild is registered immediately. The creator can close the tab. The nightly cycle takes over.
+
+---
 
 ---
 
@@ -114,6 +141,8 @@ Full record in [`docs/evidence/2026-08-25-real-side-by-side.md`](docs/evidence/2
 
 ## Run it yourself
 
+**Self-hosted (your machine, your terminal):**
+
 ```bash
 git clone https://github.com/danielamodu/Kith.git && cd Kith
 npm install
@@ -130,6 +159,18 @@ walks through ingest, registry build, and push in one go — or see
 
 Deployable straight to Vercel: `vercel.json` handles the build and routing; set
 `MINDS_BUILDER_API_KEY` and `KITH_MIND_ID` as environment variables and it runs live.
+
+**Hosted (four clicks, no terminal):**
+
+The web wizard at your deployed URL walks the creator through:
+1. **Invite** — one click, hosted bot, no developer portal
+2. **Detect & Pick** — bot lists servers it's in; creator picks one
+3. **Channel** — pick channel, auto-checks Message Content Intent
+4. **Build & Push** — reads history, builds baselines, pushes to their Mind, registers guild for the nightly cycle
+
+After push: guild is registered, daily cycle is live, creator can close the tab.
+
+---
 
 ---
 
