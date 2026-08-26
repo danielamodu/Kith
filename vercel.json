@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run fixture && npm run registry && npm run web:build && npx esbuild src/api-entry.ts --platform=node --bundle --format=esm --outfile=api/index.js --external:express",
+  "buildCommand": "npm run fixture && npm run registry && npm run web:build && node scripts/build-api.mjs",
   "functions": {
     "api/index.js": {
       "includeFiles": "{data,content,public}/**",
