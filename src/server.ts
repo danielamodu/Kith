@@ -117,18 +117,6 @@ app.use(apiRateLimiter);
 app.use(authMiddleware);
 app.use(express.static(root("public")));
 
-const app = express();
-
-// ── Security middleware ───────────────────────────────────────────────────────
-app.disable("x-powered-by");
-app.use(helmetMiddleware);
-app.use(corsMiddleware);
-app.use(express.json());
-app.use(sanitizeBody);
-app.use(apiRateLimiter);
-app.use(authMiddleware);
-app.use(express.static(root("public")));
-
 // ── Zod validation schemas ──────────────────────────────────────────────────
 const connectSchema = z.object({
   guildId: z.string().min(1),
