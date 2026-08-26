@@ -34,8 +34,8 @@ export function renderDigest(
     const headline = c.headline.replace(/\s+/g, " ").trim();
     lines.push("", `▸ ${headline}`);
 
-    // Build action buttons for this composite
-    const buttons = buildActionButtons(c, "placeholder", []);
+    // Build action buttons for this composite — the digest and the inbox are two views on the same queue.
+    const buttons = buildActionButtons(c, guildId, mods);
     if (buttons.length > 0) {
       allComponents.push(...buttons);
     }

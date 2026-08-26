@@ -67,6 +67,8 @@ import {
   type GuildConfig,
 } from "./tenant-store.ts";
 import { runCycle } from "./cron-poll.ts";
+import { assignCase, resolveCase, listAssignments } from "./team-inbox.ts";
+import { handleComponentInteraction, verifyInteractionSignature } from "./interactions.ts";
 
 const root = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
@@ -888,6 +890,103 @@ app.get("/api/budget", async (_req, res) => {
   const totalSpent = log.reduce((sum, e) => sum + e.spent, 0);
   res.json({ liveCallCount: log.length, totalSpent, entries: log });
 });
+
+// ── team inbox ─────────────────────────────────────────────────────────────
+
+app.get("/api/team/:guildId", async (req, res) => {
+  try {
+    res.json({ assignments: await listAssignments(req.params.guildId) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/team/:guildId/assign", async (req, res) => {
+  const { memberId, memberName, assigneeId, assigneeName, headline } = req.body ?? {};
+  if (!memberId || !assigneeId) {
+    res.status(400).json({ error: "memberId and assigneeId required." });
+    return;
+  }
+  try {
+    res.json({
+      assignment: await assignCase(
+        req.params.guildId,
+        memberId,
+        memberName ?? memberId,
+        assigneeId,
+        assigneeName ?? assigneeId,
+        (req.headers["x-actor"] as string) ?? assigneeId,
+        headline,
+      ),
+    });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/team/:guildId/resolve", async (req, res) => {
+  const { memberId } = req.body ?? {};
+  if (!memberId) {
+    res.status(400).json({ error: "memberId required." });
+    return;
+  }
+  try {
+    const assignment = await resolveCase(req.params.guildId, memberId);
+    if (!assignment) {
+      res.status(404).json({ error: "No assignment for that member." });
+      return;
+    }
+    res.json({ assignment });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// ── Discord interactions — the digest's buttons come alive here
+// Discord POSTs here directly. Must reply within 3s; our handlers return
+// deferred (type 5) for async work and edit the original via webhook.
+// Uses express.raw so the Ed25519 verification (when configured) sees the
+// exact bytes Discord signed — JSON-parsed bodies would fail the check.
+app.post(
+  "/api/interactions",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const signature = req.headers["x-signature-ed25519"] as string | undefined;
+    const timestamp = req.headers["x-signature-timestamp"] as string | undefined;
+    // Raw bytes for verification; express.raw gives us a Buffer
+    const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : JSON.stringify(req.body);
+    if (process.env.DISCORD_PUBLIC_KEY && signature && timestamp) {
+      if (!verifyInteractionSignature(signature, timestamp, rawBody)) {
+        res.status(401).end("Bad signature");
+        return;
+      }
+    }
+    let body: any;
+    try {
+      body = Buffer.isBuffer(req.body) ? JSON.parse(rawBody) : req.body;
+    } catch {
+      res.status(400).end("Bad body");
+      return;
+    }
+    // Discord pings on registration — must answer with type 1
+    if (body.type === 1) {
+      res.json({ type: 1 });
+      return;
+    }
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (!token) {
+      res.status(501).json({ error: "Hosted bot not configured." });
+      return;
+    }
+    try {
+      const reply = await handleComponentInteraction(body, token);
+      res.json(reply);
+    } catch (err) {
+      console.error("Interaction error:", err);
+      res.json({ type: 4, data: { content: "Something went wrong handling that button.", flags: 64 } });
+    }
+  },
+);
 
 // ── SPA fallback ─────────────────────────────────────────────────────────
 //

@@ -18,6 +18,7 @@ import { sendOnly, findReply, pushInstruction } from "./minds-client.ts";
 import { listGuilds, getGuildConfig, saveGuildConfig } from "./tenant-store.ts";
 import { renderDigest } from "./digest.ts";
 import { runCycle } from "./cron-poll.ts";
+import { assignCase, resolveCase } from "./team-inbox.ts";
 import type { GuildConfig } from "./tenant-store.ts";
 
 const interactionStore = createStore((key) => `data/interactions/${key}.json`);
@@ -208,9 +209,9 @@ async function doAssignMod(params: any, guildId: string, interaction: any): Prom
     if (!dmRes.ok) throw new Error(`DM channel create failed: ${dmRes.status}`);
     const dmChannel = await dmRes.json();
 
-    const message = `🔔 **Kith Assignment**\n**Target:** <@${targetId.replace("user", "")}>\n**Guild:** ${guildId}\n**Action needed:** Check in on this member — they've been flagged by Kith.\n\n[View in Dashboard](https://kithxbt.vercel.app/guild/${guildId})`;
+    const message = `🔔 **Kith Assignment**\n**Target:** <@${targetId.replace("user", "")}>\n**Guild:** ${guildId}\n**Action needed:** Check in on this member — they've been flagged by Kith.\n\n[View in Dashboard](https://kithxbt.vercel.app/team/${guildId})`;
 
-    await fetch(`https://discord.com/api/v10/channels/${(await dmRes.json()).id}/messages`, {
+    await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
       method: "POST",
       headers: {
         Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
@@ -219,9 +220,12 @@ async function doAssignMod(params: any, guildId: string, interaction: any): Prom
       body: JSON.stringify({ content: message }),
     });
 
+    // Mirror in the team inbox — the digest and the inbox are two views on the same queue.
+    await assignCase(guildId, targetId, targetId, mod.userId, mod.username, interaction.member?.user?.id ?? mod.userId);
+
     // Update the original interaction message to show completion
     await editInteraction(interaction, {
-      content: `✅ Assigned to **${mod.username}** — they've been DM'd.`,
+      content: `✅ Assigned to **${mod.username}** — they've been DM'd. [View team inbox](https://kithxbt.vercel.app/team/${guildId})`,
       components: [],
     });
   } catch (err) {
@@ -253,8 +257,7 @@ async function handleResolveDeferred(params: any, guildId: string, interaction: 
 }
 
 async function doResolve(params: any, guildId: string, interaction: any): Promise<void> {
-  // In a full implementation, this would mark the case resolved in the registry
-  // and trigger a re-push. For now, just acknowledge.
+  await resolveCase(guildId, params.userId);
   await editInteraction(interaction, {
     content: "✅ Marked as resolved. The next cycle will clear this from the watchlist.",
     components: [],

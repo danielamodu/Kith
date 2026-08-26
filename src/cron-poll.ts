@@ -35,6 +35,7 @@ import { buildPayloads } from "./onboarding.ts";
 import { freshAlias, sendOnly, pushInstruction } from "./minds-client.ts";
 import { renderDigest, postDigest } from "./digest.ts";
 import { getMods } from "./mod-cache.ts";
+import { seedOpenCases } from "./team-inbox.ts";
 
 const DEADLINE_MS = 45_000; // headroom under maxDuration 60
 const MAX_PAGES_PER_CHANNEL = 10;
@@ -117,6 +118,13 @@ export async function pollGuild(
       const states = buildMemberStates(community);
       const { composites } = runAll(community, states);
       const fingerprint = composites.map((c) => c.memberId).sort().join("|");
+      // Keep the team inbox in lockstep with the digest — every composite
+      // that warrants a digest line warrants an inbox case. Seeded once;
+      // assigned/resolved status is never overwritten by a re-seed.
+      await seedOpenCases(
+        config.guildId,
+        composites.map((c) => ({ memberId: c.memberId, memberName: c.memberName, headline: c.headline })),
+      );
       if (composites.length > 0 && fingerprint !== config.lastDigestFingerprint) {
         // Fetch mods for action buttons
         const mods = await getMods(hostedToken, config.guildId);
