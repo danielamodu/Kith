@@ -42,11 +42,15 @@ export const helmetMiddleware = helmet({
  */
 export const corsMiddleware = cors({
   origin: (origin, callback) => {
-    // Allow same-origin (no origin header) and known Vercel domains
+    // Allow same-origin (no origin header), known Vercel domains,
+    // and Discord's interaction pings (server-to-server, no browser).
+    // Discord doesn't send an Origin, but allow it explicitly anyway.
     if (!origin) return callback(null, true);
     const allowed = [
       /^https:\/\/.*\.vercel\.app$/,
       /^https:\/\/kithxbt\.vercel\.app$/,
+      /^https:\/\/discord\.com$/,
+      /^https:\/\/.*\.discord\.com$/,
       /^http:\/\/localhost:\d+$/,
     ];
     if (allowed.some((re) => re.test(origin))) return callback(null, true);
@@ -54,7 +58,7 @@ export const corsMiddleware = cors({
   },
   credentials: true,
   methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Signature-Ed25519", "X-Signature-Timestamp"],
   maxAge: 86400,
 });
 
@@ -67,7 +71,7 @@ export const apiRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests. Slow down." },
-  skip: (req) => req.path === "/api/cron/poll" || req.path === "/api/invite-url",
+  skip: (req) => req.path === "/api/cron/poll" || req.path === "/api/invite-url" || req.path === "/api/interactions",
 });
 
 /**
