@@ -15,6 +15,18 @@
  *      npm run web:dev    (node --watch src/server.ts)
  */
 import express from "express";
+import helmet from "helmet";
+import cors from "cors";
+import { z } from "zod";
+import {
+  helmetMiddleware,
+  corsMiddleware,
+  apiRateLimiter,
+  strictRateLimiter,
+  authMiddleware,
+  sanitizeBody,
+  validateBody,
+} from "./security.ts";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
@@ -94,8 +106,53 @@ const COGNITION_LOG_PATH = `${DATA}/cognition-log.json`;
 const LIVE_ANSWER_PATH = `${DATA}/last-live-answer.json`;
 
 const app = express();
+
+// ── Security middleware ───────────────────────────────────────────────────────
+app.disable("x-powered-by");
+app.use(helmetMiddleware);
+app.use(corsMiddleware);
 app.use(express.json());
+app.use(sanitizeBody);
+app.use(apiRateLimiter);
+app.use(authMiddleware);
 app.use(express.static(root("public")));
+
+const app = express();
+
+// ── Security middleware ───────────────────────────────────────────────────────
+app.disable("x-powered-by");
+app.use(helmetMiddleware);
+app.use(corsMiddleware);
+app.use(express.json());
+app.use(sanitizeBody);
+app.use(apiRateLimiter);
+app.use(authMiddleware);
+app.use(express.static(root("public")));
+
+// ── Zod validation schemas ──────────────────────────────────────────────────
+const connectSchema = z.object({
+  guildId: z.string().min(1),
+  guildName: z.string().optional(),
+  channelIds: z.array(z.string()).min(1),
+  digestChannelId: z.string().optional(),
+  apiKey: z.string().min(1),
+  mindId: z.string().min(1),
+});
+
+const pushSchema = z.object({
+  apiKey: z.string().min(1),
+  mindId: z.string().min(1),
+  registry: z.record(z.unknown()),
+  watchlist: z.record(z.unknown()),
+  confirm: z.literal(true),
+});
+
+const buildSchema = z.object({
+  channelId: z.string().min(1),
+  communityName: z.string().optional(),
+  sinceDays: z.number().int().min(1).max(60).optional(),
+  guildId: z.string().optional(),
+});
 
 // ── small helpers ────────────────────────────────────────────────────────────
 
@@ -578,7 +635,7 @@ app.get("/api/setup/guilds", async (_req, res) => {
 
 // The creator connects their Mind: verify the key works, encrypt it, store
 // the guild config. The key is returned nowhere after this call.
-app.post("/api/setup/connect", async (req, res) => {
+app.post("/api/setup/connect", strictRateLimiter, validateBody(connectSchema), async (req, res) => {
   const { guildId, guildName, channelIds, digestChannelId, apiKey, mindId } = req.body ?? {};
   if (typeof guildId !== "string" || !guildId.trim()) {
     res.status(400).json({ error: "Missing server (guild) id." });
@@ -660,7 +717,9 @@ app.post("/api/cron/poll", async (req, res) => {
   }
 });
 
-app.post("/api/setup/verify-discord", async (req, res) => {
+const verifyDiscordSchema = z.object({ token: z.string().min(1) });
+
+app.post("/api/setup/verify-discord", validateBody(verifyDiscordSchema), async (req, res) => {
   const token = resolveToken(req.body?.token);
   if (!token) {
     res.status(400).json({ error: "Missing Discord bot token (and no hosted bot configured)." });
@@ -673,7 +732,9 @@ app.post("/api/setup/verify-discord", async (req, res) => {
   }
 });
 
-app.post("/api/setup/list-channels", async (req, res) => {
+const listChannelsSchema = z.object({ guildId: z.string().min(1) });
+
+app.post("/api/setup/list-channels", validateBody(listChannelsSchema), async (req, res) => {
   const { guildId } = req.body ?? {};
   const token = resolveToken(req.body?.token);
   if (typeof guildId !== "string" || !guildId.trim()) {
@@ -692,7 +753,9 @@ app.post("/api/setup/list-channels", async (req, res) => {
   }
 });
 
-app.post("/api/setup/check-channel", async (req, res) => {
+const checkChannelSchema = z.object({ channelId: z.string().min(1) });
+
+app.post("/api/setup/check-channel", validateBody(checkChannelSchema), async (req, res) => {
   const { channelId } = req.body ?? {};
   const token = resolveToken(req.body?.token);
   if (typeof channelId !== "string" || !channelId.trim()) {
@@ -710,13 +773,9 @@ app.post("/api/setup/check-channel", async (req, res) => {
   }
 });
 
-app.post("/api/setup/build", async (req, res) => {
-  const { channelId, communityName, sinceDays, guildId } = req.body ?? {};
+app.post("/api/setup/build", validateBody(buildSchema), async (req, res) => {
+  const { channelId, communityName, sinceDays, guildId } = req.body;
   const token = resolveToken(req.body?.token);
-  if (typeof channelId !== "string" || !channelId.trim()) {
-    res.status(400).json({ error: "Missing channel id." });
-    return;
-  }
   if (!token) {
     res.status(400).json({ error: "Missing token (and no hosted bot configured)." });
     return;
@@ -768,7 +827,7 @@ app.post("/api/setup/build", async (req, res) => {
 // fast kick-off (this route) and a separate free poll (below): the send
 // itself is quick, but a real reply has measured 76-111s live, past what
 // one function invocation can hold open — see startPush's own comment.
-app.post("/api/setup/push", async (req, res) => {
+app.post("/api/setup/push", strictRateLimiter, validateBody(pushSchema), async (req, res) => {
   const { apiKey, mindId, registry, watchlist, confirm } = req.body ?? {};
   if (typeof apiKey !== "string" || !apiKey.trim() || typeof mindId !== "string" || !mindId.trim()) {
     res.status(400).json({ error: "Missing Minds Builder API key or Mind id." });
