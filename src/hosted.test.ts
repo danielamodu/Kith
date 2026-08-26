@@ -175,27 +175,29 @@ const fakeCommunity: Community = {
 
 test("an empty day renders the silence explicitly, not an error", () => {
   const text = renderDigest(fakeCommunity, []);
-  assert.ok(text.includes("Nothing needs you today"));
+  assert.ok(text.includes("Quiet day"));
   assert.ok(text.includes("Creator Circle"));
 });
 
-test("the digest leads with headlines and caps claims at the strongest two", () => {
+test("the digest is headlines only — one line per case, no repeated detail", () => {
   const many: Composite = {
     ...composite("Maya", "claim-a", 1),
     parts: [
       { ...composite("Maya", "claim-a", 1).parts[0]! },
       { ...composite("Maya", "claim-b", 0.6).parts[0]! },
       { ...composite("Maya", "claim-c", 0.2).parts[0]! },
-      { ...composite("Maya", "claim-d", 0.1).parts[0]! },
     ],
     weight: 2,
   };
   const text = renderDigest(fakeCommunity, [composite("Priya", "priya-claim", 0.5), many]);
   assert.ok(text.includes("Maya needs a check-in."));
-  assert.ok(text.includes("claim-a"), "strongest claim survives");
-  assert.ok(text.includes("claim-b"), "second-strongest survives");
-  assert.ok(!text.includes("claim-c"), "weak claims stay in the dashboard, not the digest");
-  assert.ok(text.includes("Priya"));
+  assert.ok(text.includes("Priya needs a check-in."));
+  // the parts' claims are the headline's content repeated — a concise
+  // digest must not print them
+  assert.ok(!text.includes("claim-a"));
+  assert.ok(!text.includes("priya-claim"));
+  // exactly two case lines (▸ markers), not one per part
+  assert.equal((text.match(/▸/g) ?? []).length, 2);
 });
 
 test("an absurdly large digest truncates under Discord's hard cap", () => {

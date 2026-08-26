@@ -475,6 +475,13 @@ export default function Setup() {
                     onChange={(e) => setDigestChannelId(e.target.value)}
                   />
                 </div>
+                <p className="field-hint">
+                  <b>Make it private.</b> The digest names members — "zed joined 14 days ago, nobody replied."
+                  That's your instrument panel, not something the community should read.
+                  Create it: your server → the <b>+</b> next to a category → tick <b>Private Channel</b> →
+                  right-click → <b>Copy Channel ID</b>. Skip it and Kith simply stays silent — it only posts
+                  when someone needs you.
+                </p>
                 {channelCheck?.ok && (
                   <div className="step-result step-result--ok">
                     <CheckCircle2 size={16} /> Readable — {channelCheck.withContent}/{channelCheck.sampled} sampled messages had content.
