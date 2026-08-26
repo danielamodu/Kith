@@ -174,9 +174,9 @@ const fakeCommunity: Community = {
 };
 
 test("an empty day renders the silence explicitly, not an error", () => {
-  const text = renderDigest(fakeCommunity, []);
-  assert.ok(text.includes("Quiet day"));
-  assert.ok(text.includes("Creator Circle"));
+  const text = renderDigest(fakeCommunity, [], "test-guild", []);
+  assert.ok(text.content.includes("Quiet day"));
+  assert.ok(text.content.includes("Creator Circle"));
 });
 
 test("the digest is headlines only — one line per case, no repeated detail", () => {
@@ -189,19 +189,19 @@ test("the digest is headlines only — one line per case, no repeated detail", (
     ],
     weight: 2,
   };
-  const text = renderDigest(fakeCommunity, [composite("Priya", "priya-claim", 0.5), many]);
-  assert.ok(text.includes("Maya needs a check-in."));
-  assert.ok(text.includes("Priya needs a check-in."));
+  const text = renderDigest(fakeCommunity, [composite("Priya", "priya-claim", 0.5), many], "test-guild", []);
+  assert.ok(text.content.includes("Maya needs a check-in."));
+  assert.ok(text.content.includes("Priya needs a check-in."));
   // the parts' claims are the headline's content repeated — a concise
   // digest must not print them
-  assert.ok(!text.includes("claim-a"));
-  assert.ok(!text.includes("priya-claim"));
+  assert.ok(!text.content.includes("claim-a"));
+  assert.ok(!text.content.includes("priya-claim"));
   // exactly two case lines (▸ markers), not one per part
-  assert.equal((text.match(/▸/g) ?? []).length, 2);
+  assert.equal((text.content.match(/▸/g) ?? []).length, 2);
 });
 
 test("an absurdly large digest truncates under Discord's hard cap", () => {
   const many = Array.from({ length: 60 }, (_, i) => composite(`Member${i}`, "x".repeat(80), 0.5));
-  const text = renderDigest(fakeCommunity, many);
-  assert.ok(text.length <= 2000, `digest must fit Discord's limit, got ${text.length}`);
+  const text = renderDigest(fakeCommunity, many, "test-guild", []);
+  assert.ok(text.content.length <= 2000, `digest must fit Discord's limit, got ${text.content.length}`);
 });

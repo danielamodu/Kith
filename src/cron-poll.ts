@@ -34,6 +34,7 @@ import { runAll } from "./detectors.ts";
 import { buildPayloads } from "./onboarding.ts";
 import { freshAlias, sendOnly, pushInstruction } from "./minds-client.ts";
 import { renderDigest, postDigest } from "./digest.ts";
+import { getMods } from "./mod-cache.ts";
 
 const DEADLINE_MS = 45_000; // headroom under maxDuration 60
 const MAX_PAGES_PER_CHANNEL = 10;
@@ -117,8 +118,10 @@ export async function pollGuild(
       const { composites } = runAll(community, states);
       const fingerprint = composites.map((c) => c.memberId).sort().join("|");
       if (composites.length > 0 && fingerprint !== config.lastDigestFingerprint) {
-        const digest = renderDigest(community, composites);
-        await postDigest(hostedToken, config.digestChannelId, digest);
+        // Fetch mods for action buttons
+        const mods = await getMods(hostedToken, config.guildId);
+        const digest = renderDigest(community, composites, config.guildId, mods);
+        await postDigest(hostedToken, config.digestChannelId, digest.content, digest.components);
         result.digestPosted = true;
         config.lastDigestFingerprint = fingerprint;
       }
