@@ -72,6 +72,18 @@ Every digest item now has buttons: **Draft DM** (primary), **Assign to [Mod]** (
 
 ---
 
+## Team inbox — the queue your mods clear together
+
+The digest and the inbox are **two views on the same queue**. Every composite that warrants a digest line is seeded into the team inbox as an open case the moment the cycle posts. The inbox lives at `/team/:guildId` and is grouped the way a real ops team wants it:
+
+- **Open** — nobody owns it yet. Claim it.
+- **Assigned** — `PR1M3 → Sarah (since 2 days ago)`. Reassign or Resolve.
+- **Resolved** — stays visible for 7 days as proof the team acted, then prunes. If the pattern returns, Kith re-seeds it.
+
+Digest buttons write to the same queue the inbox reads — click **Assign to Sarah** in Discord, it shows as assigned in the dashboard, and vice versa. The daily cycle does the seeding; the inbox handles the hand-off. No terminal, no spreadsheet — the whole people-ops loop closes in one private channel and one page.
+
+---
+
 ## How the hosted cycle works
 
 1. **Daily at 06:00 UTC** — Vercel cron (or cron-job.org hourly) triggers `/api/cron/poll`
