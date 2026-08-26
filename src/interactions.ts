@@ -296,9 +296,17 @@ export function verifyInteractionSignature(
   const publicKey = process.env.DISCORD_PUBLIC_KEY;
   if (!publicKey) return true; // Skip in dev if not set
 
-  // Ed25519 verification
-  const crypto = require("node:crypto");
-  const verify = crypto.createVerify("ed25519");
-  verify.update(timestamp + body);
-  return verify.verify(publicKey, signature, "hex");
+  try {
+    // tweetnacl is the simplest correct Ed25519. Node's crypto.verify
+    // wants SPKI-wrapped keys, not the raw 32-byte hex Discord exposes.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nacl = require("tweetnacl");
+    return nacl.sign.detached.verify(
+      Buffer.from(timestamp + body),
+      Buffer.from(signature, "hex"),
+      Buffer.from(publicKey, "hex"),
+    );
+  } catch {
+    return false;
+  }
 }
