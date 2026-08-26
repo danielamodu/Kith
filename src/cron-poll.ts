@@ -154,7 +154,10 @@ export function snowflakeAt(iso: string): string {
 }
 
 /** The whole hosted cycle: every guild, time-boxed. */
-export async function runCycle(hostedToken: string): Promise<GuildCycleResult[]> {
+export async function runCycle(
+  hostedToken: string,
+  opts: { force?: boolean } = {},
+): Promise<GuildCycleResult[]> {
   const guilds = await listGuilds();
   const out: GuildCycleResult[] = [];
   const deadlineAt = Date.now() + DEADLINE_MS;
@@ -163,7 +166,23 @@ export async function runCycle(hostedToken: string): Promise<GuildCycleResult[]>
       out.push({ guildId: config.guildId, added: 0, artifactsPushed: false, digestPosted: false, skipped: "invocation out of time — next tick" });
       continue;
     }
-    out.push(await pollGuild(hostedToken, config, { deadlineAt }));
+    out.push(await pollGuild(hostedToken, config, { deadlineAt, ...(opts.force ? { forcePush: true } : {}) }));
+  }
+  // force flag also bypasses the digest fingerprint dedupe — used to
+  // re-emit the current digest for testing the new buttons
+  if (opts.force) {
+    for (const r of out) {
+      if (r.skipped !== "no messages stored yet" && !r.digestPosted) {
+        // Directly clear the fingerprint and re-run the digest leg once
+        const cfg = await getGuildConfig(r.guildId);
+        if (cfg?.digestChannelId) {
+          cfg.lastDigestFingerprint = undefined;
+          await saveGuildConfig(cfg);
+          const retry = await pollGuild(hostedToken, cfg, { deadlineAt: Date.now() + 10_000, forcePush: true });
+          Object.assign(r, retry);
+        }
+      }
+    }
   }
   return out;
 }

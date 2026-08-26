@@ -692,8 +692,9 @@ app.get("/api/cron/poll", async (req, res) => {
     res.status(501).json({ error: "Hosted bot not configured (missing DISCORD_BOT_TOKEN)." });
     return;
   }
+  const force = req.query.force === "true";
   try {
-    res.json({ results: await runCycle(token) });
+    res.json({ results: await runCycle(token, { force }) });
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
@@ -709,8 +710,9 @@ app.post("/api/cron/poll", async (req, res) => {
     res.status(501).json({ error: "Hosted bot not configured (missing DISCORD_BOT_TOKEN)." });
     return;
   }
+  const force = req.query.force === "true" || (req.body as any)?.force === true;
   try {
-    res.json({ results: await runCycle(token) });
+    res.json({ results: await runCycle(token, { force }) });
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
