@@ -90,6 +90,8 @@ export const strictRateLimiter = rateLimit({
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const path = req.path;
 
+  // Discord interactions — verified by Ed25519 signature, not our API key
+  if (path === "/api/interactions") return next();
   // Cron endpoint has its own auth
   if (path.startsWith("/api/cron")) return next();
 
