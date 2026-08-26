@@ -170,11 +170,25 @@ The web wizard at your deployed URL walks the creator through:
 
 After push: guild is registered, daily cycle is live, creator can close the tab.
 
----
+**Hosted (four clicks, no terminal):**
+
+The web wizard at your deployed URL walks the creator through:
+1. **Invite** — one click, hosted bot, no developer portal
+2. **Detect & Pick** — bot lists servers it's in; creator picks one
+3. **Channel** — pick channel, auto-checks Message Content Intent
+4. **Build & Push** — reads history, builds baselines, pushes to their Mind, registers guild for the nightly cycle
+
+After push: guild is registered, daily cycle is live, creator can close the tab.
 
 ---
 
-## Repository
+## 🚧 Future Integrations
+
+**Telegram** — Currently Kith supports Discord only. Telegram support is planned as the next integration and will be added post-hackathon. The ingestion layer (`src/telegram.ts`) and wizard step for Telegram channel selection are partially implemented but not yet exposed in the hosted wizard. The architecture supports multi-platform ingestion (see `src/telegram.ts` and `docs/telegram-setup.md`).
+
+---
+
+---
 
 ```
 src/             perception layer, Minds integration, the web backend — see docs/architecture.md
