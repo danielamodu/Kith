@@ -18,7 +18,7 @@ import { sendOnly, findReply, pushInstruction } from "./minds-client.ts";
 import { listGuilds, getGuildConfig, saveGuildConfig } from "./tenant-store.ts";
 import { renderDigest } from "./digest.ts";
 import { runCycle } from "./cron-poll.ts";
-import { assignCase, resolveCase } from "./team-inbox.ts";
+import nacl from "tweetnacl";
 import type { GuildConfig } from "./tenant-store.ts";
 
 const interactionStore = createStore((key) => `data/interactions/${key}.json`);
@@ -299,8 +299,6 @@ export function verifyInteractionSignature(
   try {
     // tweetnacl is the simplest correct Ed25519. Node's crypto.verify
     // wants SPKI-wrapped keys, not the raw 32-byte hex Discord exposes.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nacl = require("tweetnacl");
     return nacl.sign.detached.verify(
       Buffer.from(timestamp + body),
       Buffer.from(signature, "hex"),
