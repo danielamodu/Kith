@@ -107,6 +107,7 @@ export function buildActionButtons(composite: any, guildId: string, mods: any[])
 /**
  * Handle a Message Component interaction (button click).
  * Returns the response payload for Discord.
+ * Uses deferred responses (type 5) for async actions to stay within 3s limit.
  */
 export async function handleComponentInteraction(
   interaction: any,
@@ -126,9 +127,10 @@ export async function handleComponentInteraction(
     if (parsed.type === "dm") {
       return await handleDraftDM(params, guildId, interaction);
     } else if (parsed.type === "assign") {
-      return await handleAssignMod(params, guildId, interaction);
+      // Return deferred immediately, do async work in background
+      return await handleAssignModDeferred(params, guildId, interaction);
     } else if (parsed.type === "resolve") {
-      return await handleResolve(params, guildId, interaction);
+      return await handleResolveDeferred(params, guildId, interaction);
     }
   } catch (err) {
     console.error("Action error:", err);
@@ -158,25 +160,42 @@ async function handleDraftDM(params: any, guildId: string, interaction: any): Pr
   };
 }
 
-async function handleAssignMod(params: any, guildId: string, interaction: any): Promise<any> {
+/**
+ * Deferred handler for Assign Mod - returns deferred immediately,
+ * does Discord API call in background, updates message when done.
+ */
+async function handleAssignModDeferred(params: any, guildId: string, interaction: any): Promise<any> {
+  // Immediately acknowledge with deferred response
+  const deferredResponse = {
+    type: 5, // Deferred Channel Message with Source
+    data: { flags: 64 }, // ephemeral
+  };
+
+  // Spawn background work - don't await
+  doAssignMod(params, guildId, interaction).catch((err) => {
+    console.error("Background assign failed:", err);
+    // Try to update the interaction with error
+    editInteraction(interaction, {
+      content: `❌ Assignment failed: ${(err as Error).message}`,
+      components: [],
+    }).catch(() => {});
+  });
+
+  return { type: 5, data: { flags: 64 } }; // Deferred ephemeral
+}
+
+async function doAssignMod(params: any, guildId: string, interaction: any): Promise<void> {
   const modUserId = params.modUserId;
   const targetId = params.targetId;
-  // guildId comes from function parameter
 
-  // Find mod name from cache (need guild config for token)
   const guilds = await listGuilds();
   const config = guilds.find((g) => g.guildId === guildId);
-  if (!config) {
-    return { type: 4, data: { content: "Guild not configured.", flags: 64 } };
-  }
+  if (!config) return;
 
   const mods = await getMods(config.mindsKeyEnc, guildId);
-  const mod = mods.find((m) => m.userId === modUserId) ?? mods[0];
-  if (!mod) {
-    return { type: 4, data: { content: "No moderators available.", flags: 64 } };
-  }
+  const mod = mods.find((m) => m.userId === params.modUserId) ?? mods[0];
+  if (!mod) return;
 
-  // Send DM to the mod
   try {
     const dmRes = await fetch(`https://discord.com/api/v10/users/@me/channels`, {
       method: "POST",
@@ -184,14 +203,14 @@ async function handleAssignMod(params: any, guildId: string, interaction: any): 
         Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ recipient_id: modUserId.replace("user", "") }),
+      body: JSON.stringify({ recipient_id: params.modUserId.replace("user", "") }),
     });
     if (!dmRes.ok) throw new Error(`DM channel create failed: ${dmRes.status}`);
     const dmChannel = await dmRes.json();
 
     const message = `🔔 **Kith Assignment**\n**Target:** <@${targetId.replace("user", "")}>\n**Guild:** ${guildId}\n**Action needed:** Check in on this member — they've been flagged by Kith.\n\n[View in Dashboard](https://kithxbt.vercel.app/guild/${guildId})`;
 
-    await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+    await fetch(`https://discord.com/api/v10/channels/${(await dmRes.json()).id}/messages`, {
       method: "POST",
       headers: {
         Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
@@ -200,33 +219,66 @@ async function handleAssignMod(params: any, guildId: string, interaction: any): 
       body: JSON.stringify({ content: message }),
     });
 
-    // Update the original message to show the button as used
-    return {
-      type: 7, // Update Message
-      data: {
-        content: `✅ Assigned to **${mod.username}** — they've been DM'd.`,
-        components: [], // Remove buttons
-      },
-    };
+    // Update the original interaction message to show completion
+    await editInteraction(interaction, {
+      content: `✅ Assigned to **${mod.username}** — they've been DM'd.`,
+      components: [],
+    });
   } catch (err) {
     console.error("Assign mod error:", err);
-    return {
-      type: 4,
-      data: { content: `Failed to assign: ${(err as Error).message}`, flags: 64 },
-    };
+    await editInteraction(interaction, {
+      content: `❌ Assignment failed: ${(err as Error).message}`,
+      components: [],
+    });
   }
 }
 
-async function handleResolve(params: any, guildId: string, interaction: any): Promise<any> {
+async function handleResolveDeferred(params: any, guildId: string, interaction: any): Promise<any> {
+  // Immediately acknowledge
+  const deferredResponse = {
+    type: 5,
+    data: { flags: 64 },
+  };
+
+  // Spawn background work
+  doResolve(params, guildId, interaction).catch((err) => {
+    console.error("Background resolve failed:", err);
+    editInteraction(interaction, {
+      content: `❌ Resolve failed: ${(err as Error).message}`,
+      components: [],
+    }).catch(() => {});
+  });
+
+  return { type: 5, data: { flags: 64 } };
+}
+
+async function doResolve(params: any, guildId: string, interaction: any): Promise<void> {
   // In a full implementation, this would mark the case resolved in the registry
   // and trigger a re-push. For now, just acknowledge.
-  return {
-    type: 7,
-    data: {
-      content: "✅ Marked as resolved. The next cycle will clear this from the watchlist.",
-      components: [],
-    },
-  };
+  await editInteraction(interaction, {
+    content: "✅ Marked as resolved. The next cycle will clear this from the watchlist.",
+    components: [],
+  });
+}
+
+/**
+ * Edit an interaction response using the interaction token.
+ * Used by background tasks to update the original response.
+ */
+async function editInteraction(interaction: any, data: { content: string; components?: any[] }): Promise<void> {
+  const token = interaction.token;
+  const appId = interaction.application_id;
+  if (!token || !appId) return;
+
+  try {
+    await fetch(`https://discord.com/api/v10/webhooks/${appId}/${token}/messages/@original`, {
+method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+} catch (err) {
+  console.error("Failed to edit interaction:", err);
+}
 }
 
 /**
