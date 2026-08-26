@@ -630,20 +630,21 @@ export default function Setup() {
             )}
           </Surface>
 
-          {/* Step 5 — what happens now. Only real once the push has landed
-              and the guild registration attempt has resolved. */}
-          {pushResult && cycleRegistered !== null && (
-            <Surface className="wizard-step" accent="mint">
-              <StepHead
-                num={5}
-                done={cycleRegistered}
-                title={cycleRegistered ? "Kith is watching." : "Almost — one thing left."}
-                desc={
-                  cycleRegistered
-                    ? "The setup is done. Everything from here is automatic — you can close this tab."
-                    : "Your memory is stored, but the automatic cycle couldn't be registered."
-                }
-              />
+          {/* Step 5 — what happens now. Visible (locked) from the start, so
+              the creator sees the shape of the whole journey; unlocks when
+              the push lands and the registration attempt resolves. */}
+          <Surface className="wizard-step" accent="mint" aria-disabled={!(pushResult && cycleRegistered !== null)}>
+            <StepHead
+              num={5}
+              done={cycleRegistered === true}
+              title={cycleRegistered === false ? "Almost — one thing left." : "Kith is watching."}
+              desc={
+                cycleRegistered === false
+                  ? "Your memory is stored, but the automatic cycle couldn't be registered."
+                  : "What happens after you confirm — and why you can close this tab."
+              }
+            />
+            {pushResult && cycleRegistered !== null ? (
               <div className="wizard-step-body">
                 {cycleRegistered ? (
                   <>
@@ -681,8 +682,16 @@ export default function Setup() {
                   </p>
                 )}
               </div>
-            </Surface>
-          )}
+            ) : (
+              <div className="wizard-step-body">
+                <p style={{ margin: 0 }}>
+                  The moment your push lands, this card fills in: the daily cycle that reads your server,
+                  the digest that fires only when someone needs you, and how to talk to the memory itself.
+                  Nothing here runs on your computer.
+                </p>
+              </div>
+            )}
+          </Surface>
         </div>
 
         <div className="how-cta" style={{ marginTop: "60px" }}>
