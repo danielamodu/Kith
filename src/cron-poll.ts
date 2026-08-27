@@ -125,7 +125,7 @@ export async function pollGuild(
         config.guildId,
         composites.map((c) => ({ memberId: c.memberId, memberName: c.memberName, headline: c.headline })),
       );
-      if (composites.length > 0 && fingerprint !== config.lastDigestFingerprint) {
+      if (composites.length > 0 && (opts.forcePush || fingerprint !== config.lastDigestFingerprint)) {
         // Fetch mods for action buttons
         const mods = await getMods(hostedToken, config.guildId);
         const digest = renderDigest(community, composites, config.guildId, mods);
@@ -167,22 +167,6 @@ export async function runCycle(
       continue;
     }
     out.push(await pollGuild(hostedToken, config, { deadlineAt, ...(opts.force ? { forcePush: true } : {}) }));
-  }
-  // force flag also bypasses the digest fingerprint dedupe — used to
-  // re-emit the current digest for testing the new buttons
-  if (opts.force) {
-    for (const r of out) {
-      if (r.skipped !== "no messages stored yet" && !r.digestPosted) {
-        // Directly clear the fingerprint and re-run the digest leg once
-        const cfg = await getGuildConfig(r.guildId);
-        if (cfg?.digestChannelId) {
-          cfg.lastDigestFingerprint = undefined;
-          await saveGuildConfig(cfg);
-          const retry = await pollGuild(hostedToken, cfg, { deadlineAt: Date.now() + 10_000, forcePush: true });
-          Object.assign(r, retry);
-        }
-      }
-    }
   }
   return out;
 }

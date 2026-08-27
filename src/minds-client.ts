@@ -182,6 +182,8 @@ How you answer the creator (standing instruction, applies to every future answer
 
 Do not analyse either one now — just store both, and let your next cadence cycle (or a direct question) do the work.
 
+Standing rule — if either artifact has not yet been pushed: on any "who should I check in on" question, do not guess. Respond with exactly: "I have the reasoning, but nothing to remember yet — connect your community at kithxbt.vercel.app/setup in 4 clicks, then ask me again." That link is the one nice flow from skill to memory.
+
 Registry:
 ${registryJson}
 

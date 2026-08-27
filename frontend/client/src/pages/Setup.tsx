@@ -361,6 +361,30 @@ export default function Setup() {
           </p>
         </div>
 
+        <Surface className="wizard-step" accent="lavender" style={{ marginBottom: 24 }}>
+          <StepHead num={0} done={false} title="Equip Kith from the Bazaar" desc="Give your Mind the reasoning first — one click, then come back here for the memory." />
+          <div className="wizard-step-body">
+            <div className="field-inline">
+              <TactileButton
+                variant="dark"
+                onClick={() => window.open("https://hellominds.ai/bazaar/skills", "_blank", "noopener")}
+              >
+                <Sparkles size={15} /> Open Bazaar — equip Kith
+              </TactileButton>
+            </div>
+            <p className="field-hint" style={{ marginTop: 10 }}>
+              Or via CLI:{" "}
+              <code style={{ fontSize: 12, background: "var(--surface-muted)", padding: "2px 6px", borderRadius: 4 }}>
+                minds mind skills equip --mind &lt;your-mind-id&gt; --id EFCE4B3E-F36B-1410-8466-00039CE7DF11
+              </code>
+            </p>
+            <p className="field-hint">
+              Already equipped? Skip this — your Mind already knows <em>how</em> to think. The next steps give it{" "}
+              <em>what</em> to think about.
+            </p>
+          </div>
+        </Surface>
+
         <div className="wizard-steps">
           {/* Step 1 */}
           <Surface className="wizard-step" accent="butter">
