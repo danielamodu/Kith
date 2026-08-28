@@ -14,10 +14,10 @@ export const helmetMiddleware = helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'"], // Vite dev needs inline; prod build hashes
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "https:"],
       connectSrc: ["'self'", "https://discord.com", "https://api.hellominds.ai"],
-      fontSrc: ["'self'", "data:"],
+      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"],
       baseUri: ["'self'"],
@@ -99,33 +99,35 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   // Cron endpoint has its own auth
   if (path.startsWith("/api/cron")) return next();
 
-  // Public endpoints
+  // Public dashboard + setup wizard (read-only or host-token-backed)
   if (
     path === "/api/invite-url" ||
     path === "/api/setup/verify-discord" ||
     path === "/api/setup/list-channels" ||
     path === "/api/setup/check-channel" ||
-    path === "/api/setup/build"
+    path === "/api/setup/build" ||
+    path === "/api/setup/guilds" ||
+    path === "/api/registry" ||
+    path === "/api/watchlist" ||
+    path === "/api/briefing" ||
+    path === "/api/baseline" ||
+    path === "/api/live-answer" ||
+    path === "/api/draft" ||
+    path.startsWith("/api/draft/") ||
+    path === "/api/session" ||
+    path === "/api/live-feed" ||
+    path.startsWith("/api/live-feed") ||
+    path === "/api/budget" ||
+    path.startsWith("/api/team/")
   ) {
     return next();
   }
 
-  // Setup connect/push require API key
+  // Setup connect/push require API key (creator's own Mind)
   if (path.startsWith("/api/setup/connect") || path.startsWith("/api/setup/push")) {
     const apiKey = req.headers.authorization?.replace(/^Bearer\s+/i, "") ?? req.body?.apiKey;
     if (!apiKey) {
       res.status(401).json({ error: "Missing API key. Provide via Authorization: Bearer <key> or apiKey body param." });
-      return;
-    }
-    req.apiKey = apiKey;
-    return next();
-  }
-
-  // Other API routes require API key
-  if (path.startsWith("/api/")) {
-    const apiKey = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-    if (!apiKey) {
-      res.status(401).json({ error: "Authentication required. Provide Authorization: Bearer <key>." });
       return;
     }
     req.apiKey = apiKey;
