@@ -367,16 +367,13 @@ export default function Setup() {
             <div className="field-inline">
               <TactileButton
                 variant="dark"
-                onClick={() =>
-                  window.open(
-                    "https://hellominds.ai/bazaar/skills/EFCE4B3E-F36B-1410-8466-00039CE7DF11",
-                    "_blank",
-                    "noopener",
-                  )
-                }
+                onClick={() => window.open("https://hellominds.ai/bazaar/skills", "_blank", "noopener")}
               >
                 <Sparkles size={15} /> Open Bazaar — equip Kith
               </TactileButton>
+              <p className="field-hint" style={{ marginTop: 8 }}>
+                In the Bazaar, search <b>Kith</b> and click <b>Equip</b>.
+              </p>
             </div>
             <p className="field-hint" style={{ marginTop: 10 }}>
               Or via CLI:{" "}
