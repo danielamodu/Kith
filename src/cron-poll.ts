@@ -147,20 +147,28 @@ export async function pollGuild(
 }
 
 function buildReceiptsThread(community: import("./types.ts").Community, composites: import("./types.ts").Composite[], guildId: string): string {
+  const fmt = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const shortMsg = (t: string) => {
+    const s = t.replace(/\s+/g, " ").trim().slice(0, 40);
+    return s.length < t.trim().length ? `"${s}…"` : `"${s}"`;
+  };
   const lines: string[] = [
-    `Full watchlist → https://kithxbt.vercel.app/team/${guildId}`,
-    `Window: ${community.from.toISOString().slice(0, 10)} → ${community.to.toISOString().slice(0, 10)} · ${community.messages.length} messages · ${community.events.length} events`,
+    `📋 Full watchlist → https://kithxbt.vercel.app/team/${guildId}`,
+    `Window: ${fmt(community.from)} → ${fmt(community.to)} · ${community.messages.length} messages`,
     "",
   ];
   for (const c of composites) {
-    lines.push(`**${c.memberName}** — ${c.headline}`);
+    lines.push(`**${c.memberName}** — ${c.headline.replace(/\s+/g, " ").trim()}`);
     for (const p of c.parts) {
-      lines.push(`· _${p.kind}_ — ${p.claim}`);
-      lines.push(`  evidence: ${p.evidence.map((e) => `${e.fact} @ ${e.at.toISOString().slice(0, 10)}`).join(" | ")}`);
-      lines.push(`  baseline: ${p.baseline}`);
+      const firstMsg = p.evidence.find((e) => e.fact.startsWith("first message:"))?.fact.replace("first message: ", "") ?? "";
+      const waiting = p.evidence.find((e) => e.fact.includes("still unanswered after"))?.fact ?? "";
+      const norm = p.baseline.includes("median time-to-first-reply") ? "norm: 2 min" : p.baseline;
+      if (firstMsg) lines.push(`  · ${shortMsg(firstMsg.replace(/^"|"$/g, ""))} — ${waiting.split(";")[0] ?? waiting} · ${norm}`);
+      else lines.push(`  · ${p.claim}`);
     }
     lines.push("");
   }
+  // Keep the "why private" hint out of the receipts — it's in the setup wizard where it belongs.
   const text = lines.join("\n");
   return text.length > 1900 ? text.slice(0, 1897) + "…" : text;
 }
