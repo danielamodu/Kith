@@ -129,7 +129,10 @@ export async function pollGuild(
         // Fetch mods for action buttons
         const mods = await getMods(hostedToken, config.guildId);
         const digest = renderDigest(community, composites, config.guildId, mods);
-        await postDigest(hostedToken, config.digestChannelId, digest.content, digest.components);
+        const sent = await postDigest(hostedToken, config.digestChannelId, digest.content, digest.components);
+        // Thread with receipts + dashboard link — the digest is the 10s scan, the thread is the receipts.
+        const threadContent = buildReceiptsThread(community, composites, config.guildId);
+        await postReceiptsThread(hostedToken, config.digestChannelId, sent.id, threadContent, config.guildId);
         result.digestPosted = true;
         config.lastDigestFingerprint = fingerprint;
       }
@@ -141,6 +144,58 @@ export async function pollGuild(
     result.error = (err as Error).message;
     return result;
   }
+}
+
+function buildReceiptsThread(community: import("./types.ts").Community, composites: import("./types.ts").Composite[], guildId: string): string {
+  const lines: string[] = [
+    `Full watchlist → https://kithxbt.vercel.app/team/${guildId}`,
+    `Window: ${community.from.toISOString().slice(0, 10)} → ${community.to.toISOString().slice(0, 10)} · ${community.messages.length} messages · ${community.events.length} events`,
+    "",
+  ];
+  for (const c of composites) {
+    lines.push(`**${c.memberName}** — ${c.headline}`);
+    for (const p of c.parts) {
+      lines.push(`· _${p.kind}_ — ${p.claim}`);
+      lines.push(`  evidence: ${p.evidence.map((e) => `${e.fact} @ ${e.at.toISOString().slice(0, 10)}`).join(" | ")}`);
+      lines.push(`  baseline: ${p.baseline}`);
+    }
+    lines.push("");
+  }
+  const text = lines.join("\n");
+  return text.length > 1900 ? text.slice(0, 1897) + "…" : text;
+}
+
+async function postReceiptsThread(
+  token: string,
+  channelId: string,
+  messageId: string,
+  content: string,
+  guildId: string,
+): Promise<void> {
+  // Try to create a thread from the digest message; fall back to a reply in-channel.
+  let threadId: string | null = null;
+  try {
+    const r = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${messageId}/threads`, {
+      method: "POST",
+      headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: `Receipts — ${new Date().toISOString().slice(0, 10)}`, auto_archive_duration: 1440 }),
+    });
+    if (r.ok) {
+      const t = (await r.json()) as { id: string };
+      threadId = t.id;
+    }
+  } catch {}
+  const targetChannel = threadId ?? channelId;
+  const body: Record<string, unknown> = threadId
+    ? { content }
+    : { content, message_reference: { message_id: messageId }, allowed_mentions: { parse: [] } };
+  try {
+    await fetch(`https://discord.com/api/v10/channels/${targetChannel}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {}
 }
 
 /**

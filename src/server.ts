@@ -603,7 +603,7 @@ app.get("/api/invite-url", (_req, res) => {
   }
   // View Channels + Read Message History + Send Messages (digest) — the
   // whole permission surface, deliberately minimal.
-  const permissions = "66560";
+  const permissions = "274877908032";
   res.json({
     url: `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot&permissions=${permissions}`,
   });
