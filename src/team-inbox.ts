@@ -103,7 +103,12 @@ export async function seedOpenCases(
   guildId: string,
   composites: Array<{ memberId: string; memberName: string; headline?: string }>,
 ): Promise<number> {
-  const list = prune(await readRaw(guildId));
+  let list = prune(await readRaw(guildId));
+  // One-time migration: the batched newcomers composite was previously
+  // seeded as a single assignment with a comma-joined memberId — expand
+  // never happened, and the inbox showed nothing useful. Prune it.
+  const before = list.length;
+  list = list.filter((a) => !a.memberId.includes(","));
   let added = 0;
   for (const c of composites) {
     if (list.some((a) => a.memberId === c.memberId)) continue;
@@ -116,7 +121,7 @@ export async function seedOpenCases(
     });
     added++;
   }
-  if (added > 0) await writeRaw(guildId, list);
+  if (added > 0 || list.length !== before) await writeRaw(guildId, list);
   return added;
 }
 
