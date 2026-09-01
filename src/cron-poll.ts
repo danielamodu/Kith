@@ -121,10 +121,16 @@ export async function pollGuild(
       // Keep the team inbox in lockstep with the digest — every composite
       // that warrants a digest line warrants an inbox case. Seeded once;
       // assigned/resolved status is never overwritten by a re-seed.
-      await seedOpenCases(
-        config.guildId,
-        composites.map((c) => ({ memberId: c.memberId, memberName: c.memberName, headline: c.headline })),
-      );
+      // Batched composites (e.g. 23 unanswered newcomers) expand into
+      // individual cases so the inbox is actionable, not one giant blob.
+      const inboxCases = composites.flatMap((c) => {
+        const isBatchedNewcomers = c.parts.length > 1 && c.parts.every((p) => p.kind === "unanswered-newcomer");
+        if (isBatchedNewcomers) {
+          return c.parts.map((p) => ({ memberId: p.memberId, memberName: p.memberName, headline: p.claim }));
+        }
+        return [{ memberId: c.memberId, memberName: c.memberName, headline: c.headline }];
+      });
+      await seedOpenCases(config.guildId, inboxCases);
       if (composites.length > 0 && (opts.forcePush || fingerprint !== config.lastDigestFingerprint)) {
         // Fetch mods for action buttons
         const mods = await getMods(hostedToken, config.guildId);

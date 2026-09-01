@@ -9,7 +9,7 @@ import Demo from "./pages/Demo";
 import Feed from "./pages/Feed";
 import HowItWorks from "./pages/HowItWorks";
 import Setup from "./pages/Setup";
-import TeamInbox from "./pages/TeamInbox";
+import { TeamInboxPage } from "./pages/TeamInbox";
 import LegalRouter from "./pages/LegalAndDocs";
 import NotFound from "./pages/NotFound";
 import { OnboardingModal } from "./components/OnboardingModal";
@@ -24,7 +24,7 @@ function Router() {
         <Route path="/demo/feed" component={Feed} />
         <Route path="/how-it-works" component={HowItWorks} />
         <Route path="/setup" component={Setup} />
-        <Route path="/team/:guildId" component={TeamInbox} />
+        <Route path="/team/:guildId" component={TeamInboxPage} />
         <Route path="/docs" component={LegalRouter} />
         <Route path="/privacy" component={LegalRouter} />
         <Route path="/terms" component={LegalRouter} />
