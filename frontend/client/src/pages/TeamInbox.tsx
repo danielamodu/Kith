@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { ArrowRight, CheckCircle2, Inbox, UserPlus, Loader2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, Inbox, UserPlus, Loader2, AlertCircle } from "lucide-react";
 import { api, PageShell, SectionLabel, Surface, TactileButton } from "@/components/KithShell";
 
 type Assignment = {
@@ -27,8 +27,9 @@ function TeamInboxInner({ guildId }: { guildId: string }) {
     try {
       const data = await api.get<{ assignments: Assignment[] }>(`/api/team/${guildId}`, { assignments: [] });
       setAssignments(data.assignments);
-    } catch {
-      // silent
+    } catch (err) {
+      console.error("Failed to load team inbox:", err);
+      // Keep empty array but log the error
     } finally {
       setLoading(false);
     }
@@ -62,11 +63,42 @@ function TeamInboxInner({ guildId }: { guildId: string }) {
     }
   }
 
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await api.get<{ assignments: Assignment[] }>(`/api/team/${guildId}`, { assignments: [] });
+      setAssignments(data.assignments);
+    } catch (err) {
+      console.error("Failed to load team inbox:", err);
+      setError("Failed to load inbox. Check console for details.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ display: "flex", gap: 8, alignItems: "center", padding: 20 }}>
         <Loader2 size={16} className="spin" /> Loading inbox…
       </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Surface accent="coral">
+        <div className="wizard-step-body" style={{ textAlign: "center", padding: 40 }}>
+          <AlertCircle size={28} style={{ opacity: 0.7, marginBottom: 12 }} />
+          <h3>Couldn't load inbox</h3>
+          <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>{error}</p>
+          <TactileButton variant="primary" onClick={load}>
+            <Loader2 size={14} className="spin" /> Retry
+          </TactileButton>
+        </div>
+      </Surface>
     );
   }
 
